@@ -1,5 +1,5 @@
 # Web API
-Django==6.1
+Django==5.2
 djangorestframework==3.17.1
 
 # Environment variables
