@@ -8,6 +8,14 @@ from .preprocessing import (
     parse_document_frontmatter,
     split_by_headers,
 )
+from .rag_chain import (
+    INSUFFICIENT_CONTEXT_MESSAGE,
+    RAGResult,
+    answer_question,
+    build_rag_chain,
+    format_context,
+    get_chat_model,
+)
 from .vector_store import (
     SyncStats,
     get_vector_store,
@@ -25,6 +33,12 @@ __all__ = [
     "split_documents",
     "split_by_headers",
     "split_long_sections",
+    "INSUFFICIENT_CONTEXT_MESSAGE",
+    "RAGResult",
+    "answer_question",
+    "build_rag_chain",
+    "format_context",
+    "get_chat_model",
     "get_vector_store",
     "sync_vector_store",
     "verify_vector_store",

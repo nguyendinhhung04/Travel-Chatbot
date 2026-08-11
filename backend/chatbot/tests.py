@@ -2,9 +2,14 @@ from io import StringIO
 from unittest.mock import MagicMock, patch
 
 from django.core.management import call_command
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from langchain_core.documents import Document
 
+from chatbot.rag.rag_chain import (
+    INSUFFICIENT_CONTEXT_MESSAGE,
+    answer_question,
+    format_context,
+)
 from chatbot.rag.retrieval import get_retriever, retrieve_documents
 
 
@@ -80,3 +85,76 @@ class RetrievalTests(SimpleTestCase):
         self.assertIn("Results: 1", rendered)
         self.assertIn("destinations/hue/overview.md", rendered)
         self.assertIn("Tong quan du lich Hue", rendered)
+
+
+class RAGChainTests(SimpleTestCase):
+    def setUp(self):
+        self.documents = [
+            Document(
+                page_content="Co the tham quan Dai Noi Hue.",
+                metadata={
+                    "title": "Hoat dong tai Hue",
+                    "source": "destinations/hue/activities.md",
+                    "header_1": "Hoat dong",
+                },
+            )
+        ]
+
+    @patch("chatbot.rag.rag_chain.ChatGoogleGenerativeAI")
+    def test_get_chat_model_uses_configured_values(self, chat_model_mock):
+        from chatbot.rag.rag_chain import get_chat_model
+
+        get_chat_model(api_key="test-key", model="test-model")
+
+        chat_model_mock.assert_called_once_with(
+            model="test-model",
+            api_key="test-key",
+            temperature=0,
+        )
+
+    def test_format_context_includes_content_and_metadata(self):
+        rendered = format_context(self.documents)
+
+        self.assertIn("Hoat dong tai Hue", rendered)
+        self.assertIn("destinations/hue/activities.md", rendered)
+        self.assertIn("Hoat dong", rendered)
+        self.assertIn("Co the tham quan Dai Noi Hue.", rendered)
+
+    @patch("chatbot.rag.rag_chain.retrieve_documents")
+    def test_answer_question_passes_context_to_chain(self, retrieve_mock):
+        retrieve_mock.return_value = self.documents
+        chain = MagicMock()
+        chain.invoke.return_value = "  Bạn có thể tham quan Đại Nội.  "
+
+        result = answer_question(
+            "  Hue co gi?  ",
+            retriever=MagicMock(),
+            chain=chain,
+        )
+
+        self.assertEqual(result.answer, "Bạn có thể tham quan Đại Nội.")
+        self.assertIs(result.documents, self.documents)
+        chain.invoke.assert_called_once()
+        values = chain.invoke.call_args.args[0]
+        self.assertEqual(values["question"], "Hue co gi?")
+        self.assertIn("Co the tham quan Dai Noi Hue.", values["context"])
+
+    @patch("chatbot.rag.rag_chain.retrieve_documents", return_value=[])
+    def test_answer_question_returns_fallback_without_calling_chain(
+        self, retrieve_mock
+    ):
+        chain = MagicMock()
+
+        result = answer_question("Khong co du lieu", chain=chain)
+
+        self.assertEqual(result.answer, INSUFFICIENT_CONTEXT_MESSAGE)
+        self.assertEqual(result.documents, [])
+        chain.invoke.assert_not_called()
+        retrieve_mock.assert_called_once()
+
+    @override_settings(GEMINI_API_KEY="")
+    def test_get_chat_model_rejects_missing_api_key(self):
+        from chatbot.rag.rag_chain import get_chat_model
+
+        with self.assertRaises(ValueError):
+            get_chat_model()
