@@ -2,11 +2,13 @@ from io import StringIO
 from unittest.mock import MagicMock, patch
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import SimpleTestCase, override_settings
 from langchain_core.documents import Document
 
 from chatbot.rag.rag_chain import (
     INSUFFICIENT_CONTEXT_MESSAGE,
+    RAGResult,
     answer_question,
     build_prompt_template,
     format_context,
@@ -204,3 +206,42 @@ class RAGChainTests(SimpleTestCase):
 
         with self.assertRaises(ValueError):
             get_chat_model()
+
+
+class AskTravelCommandTests(SimpleTestCase):
+    @patch("chatbot.management.commands.ask_travel.answer_question")
+    def test_command_prints_answer_and_sources(self, answer_mock):
+        answer_mock.return_value = RAGResult(
+            answer="Hue answer",
+            documents=[
+                Document(
+                    page_content="Nội dung",
+                    metadata={
+                        "title": "Hue activities",
+                        "source": "destinations/hue/activities.md",
+                    },
+                )
+            ],
+        )
+        output = StringIO()
+
+        call_command(
+            "ask_travel",
+            "Hue co gi?",
+            top_k=3,
+            stdout=output,
+        )
+
+        answer_mock.assert_called_once_with("Hue co gi?", top_k=3)
+        rendered = output.getvalue()
+        self.assertIn("Question: Hue co gi?", rendered)
+        self.assertIn("Hue answer", rendered)
+        self.assertIn("Hue activities", rendered)
+        self.assertIn("destinations/hue/activities.md", rendered)
+
+    @patch("chatbot.management.commands.ask_travel.answer_question")
+    def test_command_wraps_rag_errors(self, answer_mock):
+        answer_mock.side_effect = ValueError("question must not be empty")
+
+        with self.assertRaisesMessage(CommandError, "question must not be empty"):
+            call_command("ask_travel", "   ", stdout=StringIO())
