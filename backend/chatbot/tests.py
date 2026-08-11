@@ -155,6 +155,36 @@ class RAGChainTests(SimpleTestCase):
         self.assertEqual(values["question"], "Hue co gi?")
         self.assertIn("Co the tham quan Dai Noi Hue.", values["context"])
 
+    @patch("chatbot.rag.rag_chain.retrieve_documents")
+    def test_answer_question_passes_top_k_to_retrieval(self, retrieve_mock):
+        retrieve_mock.return_value = self.documents
+        chain = MagicMock()
+        chain.invoke.return_value = "Câu trả lời"
+
+        answer_question("  Hue co gi?  ", chain=chain, top_k=3)
+
+        retrieve_mock.assert_called_once_with(
+            "Hue co gi?",
+            retriever=None,
+            top_k=3,
+        )
+
+    @patch("chatbot.rag.rag_chain.retrieve_documents")
+    def test_answer_question_rejects_empty_question(self, retrieve_mock):
+        with self.assertRaises(ValueError):
+            answer_question("   ", chain=MagicMock())
+
+        retrieve_mock.assert_not_called()
+
+    @patch("chatbot.rag.rag_chain.retrieve_documents")
+    def test_answer_question_rejects_empty_model_answer(self, retrieve_mock):
+        retrieve_mock.return_value = self.documents
+        chain = MagicMock()
+        chain.invoke.return_value = "   "
+
+        with self.assertRaisesRegex(RuntimeError, "empty answer"):
+            answer_question("Hue co gi?", chain=chain)
+
     @patch("chatbot.rag.rag_chain.retrieve_documents", return_value=[])
     def test_answer_question_returns_fallback_without_calling_chain(
         self, retrieve_mock
