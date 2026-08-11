@@ -311,11 +311,11 @@ retriever = vectorstore.as_retriever(
 
 ### Checklist
 
-- [ ] Load Chroma
-- [ ] Tạo Retriever
-- [ ] Search bằng câu hỏi
-- [ ] Lấy Top 3–5 chunks
-- [ ] Kiểm tra chunks trả về có liên quan
+- [x] Load Chroma
+- [x] Tạo Retriever
+- [x] Search bằng câu hỏi
+- [x] Lấy Top 3–5 chunks
+- [x] Kiểm tra chunks trả về có liên quan
 
 ---
 

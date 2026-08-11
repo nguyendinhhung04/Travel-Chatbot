@@ -1,0 +1,221 @@
+  # Giai đoạn 4 — Retrieval đơn giản
+
+  ## Tóm tắt
+
+  Nối trực tiếp câu hỏi người dùng với Chroma đã hoàn thành ở Giai đoạn 3:
+
+  Câu hỏi -> Gemini Embedding -> Chroma similarity search -> Top 5 chunks
+
+  Chưa thêm API, prompt, Gemini Chat, lọc metadata, reranking hay similarity threshold. Người học kiểm tra kết quả bằng
+  Django management command.
+
+  ## Thay đổi chính
+
+  - Tạo chatbot/rag/retrieval.py với hai hàm:
+      - get_retriever(vector_store=None, top_k=None): mở Chroma bằng get_vector_store() và gọi
+        as_retriever(search_kwargs={"k": top_k}).
+
+      - retrieve_documents(question, retriever=None, top_k=None): kiểm tra câu hỏi, gọi retriever.invoke() và trả về
+        list[Document].
+
+  - Thêm RAG_RETRIEVAL_TOP_K = 5 trong Django settings; cho phép truyền top_k để ghi đè khi thử nghiệm.
+  - Báo ValueError rõ ràng khi câu hỏi rỗng hoặc top_k <= 0; giữ nguyên lỗi cấu hình Gemini/Chroma để command hiển thị nguyên
+    nhân.
+
+  - Tạo command:
+
+    .\.venv\Scripts\python.exe manage.py retrieve_knowledge "Ngũ Hành Sơn có phải chỉ là một ngọn núi không?"
+    Hỗ trợ --top-k, hiển thị thứ hạng, title, source, heading và đoạn nội dung rút gọn của từng chunk.
+
+  - Nếu không có kết quả, command thông báo collection có thể chưa được ingest. Lỗi Retrieval được chuyển thành CommandError.
+  - Cập nhật README với cách ingest trước khi tìm kiếm và ví dụ chạy command; đánh dấu checklist Giai đoạn 4 sau khi kiểm tra
+    thực tế thành công.
+
+  ## Kiểm thử
+
+  - Unit test get_retriever() dùng đúng search_type="similarity" và k=5, đồng thời tôn trọng giá trị ghi đè.
+  - Unit test retrieve_documents() truyền câu hỏi đã loại khoảng trắng thừa vào invoke() và trả nguyên danh sách Document.
+  - Kiểm tra câu hỏi rỗng, top_k không hợp lệ, danh sách kết quả rỗng và lỗi từ retriever.
+  - Test command bằng mock để không gọi Gemini API trong test tự động.
+  - Chạy smoke test thật trên collection 166 chunks hiện có:
+      - “Ngũ Hành Sơn có phải chỉ là một ngọn núi không?” phải có FAQ Ngũ Hành Sơn trong Top 5.
+      - “Đi Hội An từ Đà Nẵng mất bao lâu?” phải có tài liệu di chuyển hoặc FAQ Hội An.
+      - “Huế có những hoạt động gì?” phải có tài liệu hoạt động tại Huế.
+
+  - Chạy lại manage.py check và toàn bộ test suite.
+
+  ## Giả định
+
+  - Retrieval dùng similarity search mặc định của Chroma và Top 5.
+  - Không trả similarity score vì LangChain Retriever trong kế hoạch chỉ cần trả Document.
+  - Câu hỏi ngoài Knowledge Base vẫn có thể nhận các chunk gần nhất; xác định “không đủ thông tin” thuộc Giai đoạn 5.
+  - Không thêm dependency, database model, endpoint HTTP hoặc abstraction mới.
+
+
+─ Worked for 9m 15s ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› hãy chia plan ra làm các bước dễ hiểu cho người mới học
+
+
+• Proposed Plan
+
+
+  # Giai đoạn 4 — Retrieval
+
+  ## Mục tiêu
+
+  Khi nhập một câu hỏi, chương trình sẽ tìm trong ChromaDB và trả về 5 đoạn văn liên quan nhất:
+
+  Câu hỏi
+    -> Gemini tạo vector cho câu hỏi
+    -> ChromaDB so sánh vector
+    -> Trả về Top 5 chunks
+
+  Giai đoạn này chỉ làm Retrieval. Chưa làm API, prompt hoặc gọi Gemini Chat để sinh câu trả lời.
+
+  ## Bước 1 — Thêm cấu hình Top K
+
+  Trong Django settings, thêm:
+
+  RAG_RETRIEVAL_TOP_K = 5
+
+  Top K là số chunks muốn lấy từ ChromaDB. Mặc định lấy 5 chunks theo tài liệu kế hoạch.
+
+  Kiểm tra:
+
+  - Giá trị mặc định là 5.
+  - Không chấp nhận top_k <= 0.
+
+  ## Bước 2 — Tạo Retriever
+
+  Tạo chatbot/rag/retrieval.py.
+
+  Thêm hàm:
+
+  get_retriever(vector_store=None, top_k=None)
+
+  Hàm này thực hiện:
+
+  1. Gọi get_vector_store() của Giai đoạn 3 để mở ChromaDB.
+  2. Lấy top_k từ tham số hoặc Django settings.
+  3. Chuyển vector store thành LangChain Retriever:
+
+  vector_store.as_retriever(
+      search_type="similarity",
+      search_kwargs={"k": top_k},
+  )
+
+  Cho phép truyền vector_store từ bên ngoài để unit test không cần gọi Gemini hoặc mở Chroma thật.
+
+  ## Bước 3 — Tạo hàm tìm kiếm
+
+  Trong cùng file, thêm:
+
+  retrieve_documents(question, retriever=None, top_k=None)
+
+  Hàm này thực hiện:
+
+  1. Loại bỏ khoảng trắng thừa ở đầu và cuối câu hỏi.
+  2. Báo lỗi nếu câu hỏi rỗng.
+  3. Tạo Retriever nếu chưa được truyền vào.
+  4. Gọi:
+
+  documents = retriever.invoke(question)
+
+  5. Trả về:
+
+  list[Document]
+
+  Mỗi Document giữ nguyên:
+
+  - page_content: nội dung chunk.
+  - metadata["title"]: tên tài liệu.
+  - metadata["source"]: đường dẫn file Markdown.
+  - metadata["header_1"], header_2, header_3: heading của chunk.
+
+  ## Bước 4 — Tạo lệnh thử Retrieval
+
+  Tạo Django management command retrieve_knowledge.
+
+  Cách chạy:
+
+  .\.venv\Scripts\python.exe manage.py retrieve_knowledge "Ngũ Hành Sơn có phải chỉ là một ngọn núi không?"
+
+  Cho phép thay đổi số kết quả:
+
+  .\.venv\Scripts\python.exe manage.py retrieve_knowledge "Huế có gì chơi?" --top-k 3
+
+  Command sẽ hiển thị:
+
+  Question: ...
+  Results: 3
+
+  [1]
+  Title: ...
+  Source: ...
+  Heading: ...
+  Excerpt: ...
+
+  Tận dụng lại format_chunk_preview() đã có từ Giai đoạn 3 để tránh viết logic hiển thị trùng lặp.
+
+  Nếu không có kết quả, in thông báo nhắc kiểm tra đã chạy ingest_knowledge hay chưa. Nếu Gemini hoặc Chroma gặp lỗi, chuyển
+  lỗi thành CommandError dễ đọc.
+
+  ## Bước 5 — Viết unit test
+
+  Test bằng mock để không sử dụng Gemini API và quota trong test tự động.
+
+  Các trường hợp cần test:
+
+  1. get_retriever() sử dụng search_type="similarity" và k=5.
+  2. Giá trị top_k truyền vào ghi đè cấu hình mặc định.
+  3. retrieve_documents() gọi retriever.invoke() đúng một lần.
+  4. Câu hỏi được loại bỏ khoảng trắng thừa.
+  5. Câu hỏi rỗng sinh ValueError.
+  6. top_k bằng 0 hoặc số âm sinh ValueError.
+  7. Retriever trả về danh sách rỗng thì hàm trả về [].
+  8. Command hiển thị title, source và nội dung kết quả.
+  9. Command xử lý lỗi Retrieval bằng thông báo dễ hiểu.
+
+  Sau đó chạy:
+
+  .\.venv\Scripts\python.exe manage.py check
+  .\.venv\Scripts\python.exe manage.py test
+
+  ## Bước 6 — Kiểm tra với Chroma thật
+
+  Đảm bảo Knowledge Base đã được ingest:
+
+  .\.venv\Scripts\python.exe manage.py ingest_knowledge
+
+  Thử ít nhất ba câu hỏi:
+
+  Ngũ Hành Sơn có phải chỉ là một ngọn núi không?
+  Đi Hội An từ Đà Nẵng mất bao lâu?
+  Huế có những hoạt động gì?
+
+  Kết quả mong đợi:
+
+  - Câu về Ngũ Hành Sơn có tài liệu FAQ Ngũ Hành Sơn trong Top 5.
+  - Câu về Hội An có FAQ Hội An hoặc hướng dẫn di chuyển trong Top 5.
+  - Câu về Huế có tài liệu hoạt động tại Huế trong Top 5.
+  - Mỗi kết quả có title, source, heading và nội dung chunk.
+
+  Đây là bước kiểm tra thủ công vì nó cần Gemini API thật.
+
+  ## Bước 7 — Cập nhật tài liệu
+
+  - Thêm hướng dẫn sử dụng retrieve_knowledge vào README.
+  - Giải thích ngắn gọn ý nghĩa của Top K.
+
+  Chưa triển khai trong Giai đoạn 4:
+
+  - REST API.
+  - Gemini Chat.
+  - Prompt và sinh câu trả lời.
+  - Similarity threshold.
+  - Reranking.
+  - Xử lý câu hỏi ngoài Knowledge Base.
+
+  Các phần này sẽ được xử lý trong Giai đoạn 5 và Giai đoạn 6.

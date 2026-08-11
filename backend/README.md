@@ -35,6 +35,32 @@ Chay ingest that de tao/cap nhat `chroma_db/`:
 
 Chay lai lan 2 de kiem tra dong bo on dinh. Neu du lieu khong doi, output nen co `Added: 0`.
 
+## Thu Retrieval
+
+Retrieval tim cac chunk gan voi cau hoi nhat trong ChromaDB. `Top K` la so
+chunk duoc tra ve; mac dinh la 5.
+
+Tren PowerShell, dat encoding UTF-8 de hien thi tieng Viet dung:
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+```
+
+Chay mot cau hoi:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py retrieve_knowledge "Ngũ Hành Sơn có phải chỉ là một ngọn núi không?"
+```
+
+Muon thay doi so chunk:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py retrieve_knowledge "Huế có những hoạt động gì?" --top-k 3
+```
+
+Ket qua hien thi thu hang, `source`, `title`, heading va mot doan noi dung cua
+tung chunk. Can ingest Knowledge Base truoc khi thu Retrieval.
+
 ## Chay Server
 
 ```powershell

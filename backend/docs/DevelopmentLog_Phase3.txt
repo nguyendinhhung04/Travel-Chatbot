@@ -1,0 +1,469 @@
+
+  # Giai đoạn 3 — Lập chỉ mục Knowledge Base bằng LangChain
+
+  ## Mục tiêu dễ hiểu
+
+  Sau giai đoạn này, chatbot chưa trả lời câu hỏi nhưng đã có thể biến tài liệu Markdown thành dữ liệu tìm kiếm:
+
+  File Markdown
+  → Document
+  → Chunk
+  → Vector embedding
+  → ChromaDB
+
+  Khái niệm:
+
+  - Document: nội dung một file cùng metadata như tên, nguồn và chủ đề.
+  - Chunk: một đoạn nhỏ được tách từ Document.
+  - Embedding: dãy số biểu diễn ý nghĩa của chunk.
+  - ChromaDB: nơi lưu các vector để tìm kiếm ở Giai đoạn 4.
+
+  ## Các file sẽ tạo
+
+   File                           Chức năng
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   chatbot/rag/__init__.py        Biến thư mục rag thành Python package.
+  ─────────────────────────────  ─────────────────────────────────────────────────────
+   chatbot/rag/ingestion.py       Đọc Markdown, xử lý metadata, chia chunk và tạo ID.
+  ─────────────────────────────  ─────────────────────────────────────────────────────
+   chatbot/rag/vector_store.py    Kết nối Gemini Embedding và ChromaDB.
+  ─────────────────────────────  ─────────────────────────────────────────────────────
+   scripts/ingest_knowledge.py    Script chạy toàn bộ pipeline.
+  ─────────────────────────────  ─────────────────────────────────────────────────────
+   chatbot/test_ingestion.py      Kiểm tra loader, chunker và ChromaDB.
+
+  Các file cập nhật:
+
+   File                                            Thay đổi
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   config/settings.py                              Khai báo đường dẫn, model, collection và cấu hình chunk.
+  ──────────────────────────────────────────────  ───────────────────────────────────────────────────────────
+   .env                                            Khai báo model embedding.
+  ──────────────────────────────────────────────  ───────────────────────────────────────────────────────────
+   .gitignore                                      Bỏ qua thư mục chroma_db/.
+  ──────────────────────────────────────────────  ───────────────────────────────────────────────────────────
+   requirements.txt                                Khai báo trực tiếp PyYAML.
+  ──────────────────────────────────────────────  ───────────────────────────────────────────────────────────
+   Plan Django Backend — Chatbot du lịch RAG.md    Cập nhật cấu hình và tích các mục đã kiểm tra thành công.
+
+  ## Các bước triển khai nhỏ
+
+  ### Bước 1 — Khai báo cấu hình pipeline
+
+  Cập nhật config/settings.py:
+
+  KNOWLEDGE_BASE_DIR = BASE_DIR / "chatbot" / "knowledge_base"
+  CHROMA_DB_DIR = BASE_DIR / "chroma_db"
+  CHROMA_COLLECTION_NAME = "travel_knowledge"
+
+  GEMINI_EMBEDDING_MODEL = os.getenv(
+      "GEMINI_EMBEDDING_MODEL",
+      "gemini-embedding-001",
+  )
+
+  RAG_CHUNK_SIZE = 2000
+  RAG_CHUNK_OVERLAP = 200
+
+  Cập nhật .env:
+
+  GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+
+  Kết quả: mọi đường dẫn và thông số nằm ở một nơi, không hard-code rải rác.
+
+  ### Bước 2 — Bổ sung dependency xử lý YAML
+
+  Thêm vào requirements.txt:
+
+  PyYAML==6.0.3
+
+  PyYAML dùng để đọc phần đầu mỗi file:
+
+  ---
+  title: Tổng quan Phố cổ Hội An
+  slug: pho-co-hoi-an
+  tags: [UNESCO, phố cổ]
+  ---
+
+  Không thêm thư viện tokenizer vì chunk được đo theo ký tự.
+
+  ### Bước 3 — Tạo package RAG
+
+  Tạo:
+
+  chatbot/rag/
+  ├── __init__.py
+  ├── ingestion.py
+  └── vector_store.py
+
+  __init__.py chỉ export các hàm cần dùng bên ngoài, không chứa business logic.
+
+  ### Bước 4 — Đọc toàn bộ Markdown bằng LangChain
+
+  Trong ingestion.py, tạo:
+
+  load_markdown_documents() -> list[Document]
+
+  Hàm sử dụng:
+
+  - DirectoryLoader
+  - TextLoader
+  - Glob **/*.md
+  - Encoding UTF-8
+
+  Các file được sắp xếp theo đường dẫn để kết quả ổn định giữa các lần chạy.
+
+  Kiểm tra ngay sau bước này:
+
+  - Đọc đúng 30 file.
+  - Không có Document rỗng.
+  - Mỗi Document có page_content.
+  - Mỗi Document có đường dẫn source.
+
+  ### Bước 5 — Tách YAML front matter khỏi nội dung
+
+  Tạo hàm nội bộ:
+
+  parse_frontmatter(text: str, source: Path) -> tuple[str, dict]
+
+  Hàm sẽ:
+
+  1. Tìm hai dấu --- đầu file.
+  2. Dùng yaml.safe_load() đọc metadata.
+  3. Trả phần Markdown còn lại làm page_content.
+  4. Báo lỗi rõ tên file nếu YAML sai.
+
+  Các trường bắt buộc:
+
+  - title
+  - slug
+  - entity_type
+  - tags
+  - related
+  - last_reviewed
+
+  Nếu thiếu trường, script dừng trước khi gọi Gemini.
+
+  ### Bước 6 — Chuẩn hóa metadata cho Chroma
+
+  Tạo:
+
+  normalize_metadata(metadata: dict) -> dict
+
+  Quy tắc:
+
+  - source được đổi thành đường dẫn tương đối như places/pho-co-hoi-an/overview.md.
+  - date được đổi thành chuỗi ISO như 2026-08-10.
+  - List và dictionary được đổi thành JSON string.
+  - Giá trị None bị loại bỏ.
+  - Chỉ giữ kiểu str, int, float, bool.
+
+  Lý do: Chroma không nhận trực tiếp metadata là list hoặc object phức tạp.
+
+  ### Bước 7 — Tách Document theo heading Markdown
+
+  Tạo:
+
+  split_by_headers(document: Document) -> list[Document]
+
+  Dùng MarkdownHeaderTextSplitter:
+
+  headers_to_split_on = [
+      ("#", "header_1"),
+      ("##", "header_2"),
+      ("###", "header_3"),
+  ]
+
+  Cấu hình strip_headers=False để heading vẫn xuất hiện trong nội dung embedding.
+
+  Metadata của file gốc được gộp với metadata heading.
+
+  Kết quả ví dụ:
+
+  Document: Phố cổ Hội An
+      → Chunk: Cách tham quan
+      → Chunk: Vé tham quan
+      → Chunk: Bảo tồn
+
+  ### Bước 8 — Chia tiếp những đoạn quá dài
+
+  Tạo:
+
+  split_long_sections(documents: list[Document]) -> list[Document]
+
+  Dùng RecursiveCharacterTextSplitter:
+
+  chunk_size=2000
+  chunk_overlap=200
+
+  Thứ tự tách:
+
+  ["\n\n", "\n", ". ", " ", ""]
+
+  Sau khi tách:
+
+  - Không giữ chunk rỗng.
+  - Thêm chunk_index vào metadata.
+  - Giữ nguyên source, title, slug và heading.
+
+  ### Bước 9 — Tạo hàm chunking hoàn chỉnh
+
+  Tạo hàm public:
+
+  split_documents(documents: list[Document]) -> list[Document]
+
+  Flow:
+
+  Document
+  → split_by_headers()
+  → split_long_sections()
+  → thêm chunk_index
+  → List[Document]
+
+  Script sẽ in ba chunk mẫu gồm:
+
+  - Source
+  - Title
+  - Heading
+  - Độ dài
+  - Một đoạn nội dung rút gọn
+
+  ### Bước 10 — Tạo ID ổn định cho từng chunk
+
+  Tạo:
+
+  build_chunk_id(document: Document) -> str
+
+  ID là SHA-256 của:
+
+  source + page_content + metadata
+
+  Mục đích:
+
+  - Chạy ingest nhiều lần không tạo bản ghi trùng.
+  - Nội dung thay đổi sẽ tạo ID mới.
+  - Metadata thay đổi cũng được cập nhật.
+  - Có thể xác định chunk cũ cần xóa.
+
+  ### Bước 11 — Khởi tạo Gemini Embedding
+
+  Trong vector_store.py, tạo:
+
+  get_embedding_model() -> GoogleGenerativeAIEmbeddings
+
+  Hàm sẽ:
+
+  1. Kiểm tra GEMINI_API_KEY.
+  2. Báo lỗi rõ ràng nếu key trống.
+  3. Khởi tạo:
+
+  GoogleGenerativeAIEmbeddings(
+      model="gemini-embedding-001",
+      api_key=settings.GEMINI_API_KEY,
+  )
+
+  Không tự viết code gọi HTTP; LangChain xử lý request, batch và response.
+
+  ### Bước 12 — Kiểm tra một embedding mẫu
+
+  Tạo:
+
+  verify_embedding(embedding_model, sample_text: str) -> int
+
+  Hàm gọi:
+
+  embedding_model.embed_query(sample_text)
+
+  Kiểm tra:
+
+  - Kết quả là list số thực.
+  - Vector không rỗng.
+  - In số chiều vector.
+  - Không in API key.
+
+  Nếu bước này lỗi, chưa thay đổi ChromaDB.
+
+  ### Bước 13 — Mở persistent ChromaDB
+
+  Tạo:
+
+  get_vector_store(
+      embedding_model=None,
+      persist_directory=None,
+  ) -> Chroma
+
+  Khởi tạo:
+
+  Chroma(
+      collection_name="travel_knowledge",
+      embedding_function=embedding_model,
+      persist_directory="chroma_db",
+  )
+
+  Chroma tự lưu persistent khi thêm dữ liệu; không cần gọi persist() thủ công.
+
+  ### Bước 14 — Đồng bộ chunk vào Chroma
+
+  Tạo dataclass:
+
+  SyncStats:
+      total: int
+      added: int
+      unchanged: int
+      deleted: int
+
+  Tạo:
+
+  sync_vector_store(
+      vector_store: Chroma,
+      chunks: list[Document],
+  ) -> SyncStats
+
+  Flow:
+
+  1. Tạo ID cho toàn bộ chunk hiện tại.
+  2. Lấy ID đang tồn tại trong Chroma.
+  3. Tìm chunk mới hoặc đã thay đổi.
+  4. Gọi Chroma.add_documents() cho các chunk này.
+  5. LangChain tự gọi embed_documents() và upsert.
+  6. Chỉ sau khi thêm thành công mới xóa ID không còn tồn tại.
+  7. Trả thống kê đồng bộ.
+
+  Nếu Gemini lỗi giữa chừng, không thực hiện bước xóa dữ liệu cũ.
+
+  ### Bước 15 — Kiểm tra Chroma sau khi restart
+
+  Tạo:
+
+  verify_vector_store(expected_ids: set[str]) -> None
+
+  Hàm sẽ:
+
+  1. Tạo một instance Chroma mới từ chroma_db/.
+  2. Lấy toàn bộ ID.
+  3. So sánh với danh sách ID mong muốn.
+  4. Kiểm tra số lượng bản ghi.
+  5. Báo lỗi nếu thiếu hoặc thừa chunk.
+
+  Đây là bằng chứng dữ liệu được lưu persistent.
+
+  ### Bước 16 — Tạo script ingest độc lập
+
+  Tạo scripts/ingest_knowledge.py.
+
+  Script tự thêm project root vào Python path, cấu hình DJANGO_SETTINGS_MODULE và gọi django.setup().
+
+  Hỗ trợ:
+
+  python scripts/ingest_knowledge.py --dry-run
+  python scripts/ingest_knowledge.py
+
+  --dry-run:
+
+  Load Markdown
+  → Parse metadata
+  → Chunk
+  → In thống kê và ba chunk mẫu
+  → Dừng
+
+  Không gọi Gemini và không tạo ChromaDB.
+
+  Chạy mặc định:
+
+  Load
+  → Parse
+  → Chunk
+  → Test embedding
+  → Sync Chroma
+  → Reload Chroma
+  → In kết quả
+
+  Output dự kiến:
+
+  Loaded documents: 30
+  Created chunks: <số thực tế>
+  Embedding dimension: <số thực tế>
+  Added: <n>
+  Unchanged: <n>
+  Deleted: <n>
+  Persisted chunks: <tổng>
+  Ingestion completed successfully
+
+  ### Bước 17 — Viết unit test không gọi Gemini
+
+  Tạo chatbot/test_ingestion.py.
+
+  Dùng DeterministicFakeEmbedding của LangChain cho test Chroma.
+
+  Các test:
+
+  1. Loader đọc đúng 30 file.
+  2. Không có Document rỗng.
+  3. YAML front matter không còn trong page_content.
+  4. Metadata chứa các trường bắt buộc.
+  5. Source là đường dẫn tương đối.
+  6. Metadata chỉ chứa scalar.
+  7. Chunk không rỗng.
+  8. Chunk giữ metadata file gốc.
+  9. ID chunk ổn định.
+  10. ID chunk không trùng.
+  11. Sync lần hai không tăng số bản ghi.
+  12. Xóa một chunk làm ID cũ biến mất.
+  13. Chroma instance mới reload được dữ liệu.
+  14. Thiếu GEMINI_API_KEY tạo lỗi dễ hiểu.
+
+  ### Bước 18 — Chạy kiểm tra local
+
+  Chạy lần lượt:
+
+  python manage.py check
+  python manage.py test
+  python scripts/ingest_knowledge.py --dry-run
+
+  Điều kiện đạt:
+
+  - Django không có lỗi.
+  - Unit test pass.
+  - Dry-run đọc đúng 30 file.
+  - Các chunk mẫu có nội dung và metadata đúng.
+
+  ### Bước 19 — Chạy ingest thật
+
+  Chạy:
+
+  python scripts/ingest_knowledge.py
+
+  Điều kiện đạt:
+
+  - Gemini trả vector.
+  - Tạo thư mục chroma_db/.
+  - Collection travel_knowledge có dữ liệu.
+  - Reload được collection.
+  - Script kết thúc với exit code 0.
+
+  Chạy lại cùng lệnh lần hai để xác nhận:
+
+  Added: 0
+
+  Sau khi mọi kiểm tra thành công:
+
+      - Lưu source.
+      - Kiểm tra Document.
+      - Tách theo heading.
+      - Chia đoạn dài.
+      - Giữ metadata.
+      - Embed toàn bộ chunk.
+      - Tạo và lưu Chroma collection.
+      - Persistent storage.
+      - Reload sau restart.
+      - Script ingest chạy độc lập.
+
+  ## Giả định đã chốt
+
+  - Dùng LangChain cho loader, splitter, embedding và vector store.
+  - Chỉ viết code riêng cho YAML metadata, ID và đồng bộ an toàn.
+  - Dùng Gemini Developer API, không dùng Vertex AI.
+  - Model là gemini-embedding-001.
+  - Knowledge Base giữ tại chatbot/knowledge_base.
+  - Chroma lưu local tại chroma_db/ và không commit.
+  - Retriever và RAG chat chưa triển khai trong giai đoạn này.
+
