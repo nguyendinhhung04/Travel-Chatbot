@@ -1,52 +1,115 @@
-# Giai đoạn 5 — RAG Chat
+ # Giai đoạn 6 — RAG Chat đơn giản
 
-## Mục tiêu
+  ## Mục tiêu
 
-Hoàn thiện luồng hỏi đáp dựa trên Knowledge Base:
+  Ghép các phần đã có thành luồng hoàn chỉnh:
 
-```text
-Câu hỏi
-→ Retriever
-→ Context
-→ PromptTemplate
-→ Gemini Chat
-→ Câu trả lời + nguồn
-```
+  Câu hỏi
+  → Retriever lấy Top K chunks
+  → Ghép chunks thành Context
+  → PromptTemplate
+  → Gemini Chat
+  → Câu trả lời + documents đã dùng
 
-Giai đoạn này chưa tạo REST API hoặc lưu lịch sử hội thoại. API sẽ được thực
-hiện ở Giai đoạn 6.
+  Giai đoạn này chỉ xây dựng RAG nội bộ và lệnh thử thủ công. Chưa tạo REST API, serializer, lịch sử hội thoại hoặc
+  database model; các phần đó thuộc giai đoạn 6–7.
 
-## Thay đổi chính
+  ## Các bước triển khai
 
-- Thêm `GEMINI_CHAT_MODEL` với mặc định `gemini-3.5-flash-lite`.
-- Tạo `chatbot/rag/rag_chain.py` với:
-  - Prompt tiếng Việt chỉ sử dụng Context.
-  - `get_chat_model()` dùng Gemini Chat với `temperature=0`.
-  - `format_context()` giữ nội dung và metadata của chunks.
-  - `RAGResult` lưu câu trả lời cùng documents đã dùng.
-  - `answer_question()` nối Retrieval với Prompt và Gemini.
-- Tạo command `ask_travel` để thử RAG từ terminal.
-- Cập nhật README với cách chạy RAG Chat.
+  ### Bước 1 — Cấu hình Gemini Chat
 
-## Kiểm thử tự động
+  - Thêm GEMINI_CHAT_MODEL vào Django settings và .env.example.
+  - Mặc định dùng gemini-3.5-flash-lite, theo lựa chọn ưu tiên tốc độ và chi phí; đây là dòng model ổn định trong danh
+    sách model Gemini chính thức (https://ai.google.dev/gemini-api/docs/models).
 
-- `manage.py check`: thành công.
-- 17 unit test: thành công.
-- Unit test không gọi Gemini API thật; factory, prompt, Retrieval, fallback,
-  câu trả lời rỗng và command đều dùng mock.
+  - Dùng lại GEMINI_API_KEY; không thêm dependency mới.
+  - Cố định temperature=0 để câu trả lời RAG ít ngẫu nhiên và bám tài liệu hơn.
 
-## Smoke test với Gemini thật
+  ### Bước 2 — Tạo module RAG Chat
 
-Đã chạy thành công sau khi cho phép kết nối Gemini API:
+  Tạo chatbot/rag/rag_chain.py, tập trung toàn bộ logic giai đoạn 5 trong một file:
 
-1. `Huế có những hoạt động gì?`
-   - Trả lời được từ tài liệu hoạt động và tổng quan Huế.
-2. `Đi Hội An từ Đà Nẵng mất bao lâu?`
-   - Trả lời được từ FAQ Hội An và hướng dẫn di chuyển.
-3. `Paris có những điểm du lịch nào?`
-   - Trả về `Knowledge Base hiện chưa có đủ thông tin.`
+  - get_chat_model(api_key=None, model=None): kiểm tra cấu hình và khởi tạo ChatGoogleGenerativeAI.
+  - format_context(documents): ghép nội dung các chunks, kèm title, source và heading để Gemini hiểu nguồn của từng
+    đoạn.
 
-## Kết luận
+  - build_rag_chain(chat_model=None): ghép PromptTemplate | Gemini | StrOutputParser.
+  - Không tạo thêm service layer, repository hoặc class phức tạp.
 
-Phần triển khai và nghiệm thu Giai đoạn 5 đã hoàn tất. Chưa có REST API,
-serializer hoặc conversation history; các phần này thuộc các giai đoạn sau.
+  ### Bước 3 — Tạo PromptTemplate
+
+  Prompt bằng tiếng Việt, có hai biến {context} và {question}, yêu cầu Gemini:
+
+  - Chỉ sử dụng thông tin trong Context.
+  - Không tự bổ sung địa điểm, giá, thời gian hoặc thông tin bên ngoài.
+  - Nếu Context không trả lời được, trả đúng thông báo: Knowledge Base hiện chưa có đủ thông tin.
+  - Trả lời ngắn gọn, dễ hiểu và phù hợp vai trò trợ lý du lịch.
+
+  ### Bước 4 — Tạo hàm hỏi đáp chính
+
+  Khai báo giao diện:
+
+  @dataclass(frozen=True)
+  class RAGResult:
+      answer: str
+      documents: list[Document]
+
+  answer_question(
+      question: str,
+      *,
+      retriever=None,
+      chain=None,
+      top_k: int | None = None,
+  ) -> RAGResult
+
+  Luồng xử lý:
+
+  1. Loại bỏ khoảng trắng và từ chối câu hỏi rỗng.
+  2. Gọi retrieve_documents() đúng một lần.
+  3. Nếu không có document, trả thông báo thiếu dữ liệu mà không gọi Gemini.
+  4. Ghép documents thành Context.
+  5. Gọi chain với context và question.
+  6. Báo lỗi rõ ràng nếu Gemini trả nội dung rỗng.
+  7. Trả cả answer và documents để giai đoạn 6 có thể tạo danh sách nguồn mà không Retrieval lần nữa.
+
+  ### Bước 5 — Tạo lệnh thử end-to-end
+
+  Tạo management command:
+
+  .\.venv\Scripts\python.exe manage.py ask_travel "Huế có những hoạt động gì?"
+  .\.venv\Scripts\python.exe manage.py ask_travel "Đi Hội An từ Đà Nẵng mất bao lâu?" --top-k 3
+
+  Command hiển thị:
+
+  - Câu hỏi.
+  - Câu trả lời của Gemini.
+  - title và source của các chunks đã dùng để kiểm tra tính bám nguồn.
+  - Lỗi cấu hình, Retrieval hoặc Gemini dưới dạng CommandError dễ đọc.
+
+  Đây chỉ là công cụ học và smoke test; chưa phải Chat API.
+
+  ## Kiểm thử và tiêu chí hoàn thành
+
+  - Unit test bằng mock, không gọi Gemini hay Chroma thật:
+      - Chat model dùng đúng API key, model và temperature=0.
+      - Context chứa nội dung cùng metadata của documents.
+      - Câu hỏi rỗng bị từ chối.
+      - Không có documents trả thông báo thiếu dữ liệu và không gọi Gemini.
+      - Gemini trả nội dung rỗng sinh lỗi rõ ràng.
+      - RAGResult giữ cả answer và đúng documents đã Retrieval.
+      - Command hiển thị answer, sources và xử lý lỗi.
+
+  - Chạy manage.py check và toàn bộ test suite.
+  - Smoke test thật:
+      - Câu hỏi có dữ liệu về Huế, Hội An hoặc Ngũ Hành Sơn phải được trả lời từ Context.
+      - Câu hỏi về địa điểm không tồn tại trong Knowledge Base phải nhận thông báo thiếu dữ liệu.
+      - Kiểm tra thủ công answer không chứa thông tin mâu thuẫn với các chunks hiển thị.
+
+  - Cập nhật README, nhật ký giai đoạn 5 và chỉ đánh dấu checklist hoàn thành sau khi smoke test thật thành công.
+
+  ## Giả định
+
+  - Giữ Retrieval similarity Top 5 hiện tại; chưa thêm threshold, reranking hoặc hybrid search.
+  - Prompt chịu trách nhiệm nhận biết Context không đủ thông tin.
+  - Chưa deduplicate hoặc định dạng nguồn cho response HTTP; việc đó thuộc giai đoạn 6.
+  - Chưa thêm chat history, streaming, agent, tool calling hoặc web search.
