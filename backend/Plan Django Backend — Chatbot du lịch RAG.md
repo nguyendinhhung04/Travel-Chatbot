@@ -273,11 +273,11 @@ python scripts/ingest_knowledge.py
 
 ### Checklist
 
-- [ ] Script chạy độc lập
-- [ ] Đọc toàn bộ Knowledge Base
-- [ ] Chunk thành công
-- [ ] Embedding thành công
-- [ ] Lưu thành công vào Chroma
+- [x] Script chạy độc lập
+- [x] Đọc toàn bộ Knowledge Base
+- [x] Chunk thành công
+- [x] Embedding thành công
+- [x] Lưu thành công vào Chroma
 
 ---
 
