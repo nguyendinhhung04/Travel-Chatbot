@@ -39,6 +39,7 @@ CHROMA_DB_DIR = BASE_DIR / 'chroma_db'
 CHROMA_COLLECTION_NAME = 'travel_knowledge'
 RAG_CHUNK_SIZE = 2000
 RAG_CHUNK_OVERLAP = 200
+RAG_RETRIEVAL_TOP_K = 5
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
