@@ -80,6 +80,28 @@ Command hien thi cau tra loi va cac `title`/`source` cua chunks da duoc dung.
 Neu Knowledge Base khong co du thong tin, chatbot tra ve:
 `Knowledge Base hien chua co du thong tin.`
 
+## Thu Chat API
+
+Sau khi da ingest Knowledge Base va cau hinh `GEMINI_API_KEY`, khoi dong server:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py runserver
+```
+
+Goi endpoint bang PowerShell:
+
+```powershell
+$body = @{ message = "Hue co nhung hoat dong gi?" } | ConvertTo-Json
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/chat/" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body $body
+```
+
+Response gom `answer` va danh sach `sources` (khong lap tai lieu). Cau hoi khong hop le tra `400`; loi Gemini,
+Embedding hoac Chroma tra `503` voi thong bao an toan.
+
 ## Chay Server
 
 ```powershell

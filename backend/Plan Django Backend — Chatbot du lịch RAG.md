@@ -407,7 +407,7 @@ thành một RAG pipeline.
 - [x] Retriever trả documents
 - [x] Documents được đưa vào prompt
 - [x] Gemini sinh câu trả lời
-- [ ] API trả answer cho frontend (thực hiện ở Giai đoạn 6)
+- [x] API trả answer cho frontend (thực hiện ở Giai đoạn 6)
 
 ---
 
@@ -443,12 +443,12 @@ Response:
 
 ### Checklist
 
-- [ ] Tạo serializer
-- [ ] Tạo API view
-- [ ] Gọi RAG Chain
-- [ ] Trả answer
-- [ ] Trả sources
-- [ ] Handle lỗi Gemini API
+- [x] Tạo serializer
+- [x] Tạo API view
+- [x] Gọi RAG Chain
+- [x] Trả answer
+- [x] Trả sources
+- [x] Handle lỗi Gemini API
 
 ---
 
