@@ -32,6 +32,10 @@ GEMINI_EMBEDDING_MODEL = os.getenv(
     'GEMINI_EMBEDDING_MODEL',
     'gemini-embedding-001',
 )
+GEMINI_CHAT_MODEL = os.getenv(
+    'GEMINI_CHAT_MODEL',
+    'gemini-3.5-flash-lite',
+)
 
 # RAG pipeline configuration.
 KNOWLEDGE_BASE_DIR = BASE_DIR / 'chatbot' / 'knowledge_base'
