@@ -358,10 +358,10 @@ Question:
 
 ### Checklist
 
-- [ ] Tạo PromptTemplate
-- [ ] Truyền context vào prompt
-- [ ] Truyền question vào prompt
-- [ ] Yêu cầu Gemini không tự bịa thông tin
+- [x] Tạo PromptTemplate
+- [x] Truyền context vào prompt
+- [x] Truyền question vào prompt
+- [x] Yêu cầu Gemini không tự bịa thông tin
 
 ---
 
@@ -381,9 +381,9 @@ Answer
 
 ### Checklist
 
-- [ ] Kết nối Gemini Chat
-- [ ] Gọi model thành công
-- [ ] Nhận text response
+- [x] Kết nối Gemini Chat
+- [x] Gọi model thành công
+- [x] Nhận text response
 
 ---
 
@@ -403,11 +403,11 @@ thành một RAG pipeline.
 
 ### Checklist
 
-- [ ] User question đi vào Retriever
-- [ ] Retriever trả documents
-- [ ] Documents được đưa vào prompt
-- [ ] Gemini sinh câu trả lời
-- [ ] API trả answer cho frontend
+- [x] User question đi vào Retriever
+- [x] Retriever trả documents
+- [x] Documents được đưa vào prompt
+- [x] Gemini sinh câu trả lời
+- [ ] API trả answer cho frontend (thực hiện ở Giai đoạn 6)
 
 ---
 

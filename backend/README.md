@@ -61,6 +61,25 @@ Muon thay doi so chunk:
 Ket qua hien thi thu hang, `source`, `title`, heading va mot doan noi dung cua
 tung chunk. Can ingest Knowledge Base truoc khi thu Retrieval.
 
+## Thu RAG Chat
+
+Sau khi Knowledge Base da ingest, co the thu luong RAG day du bang command:
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe manage.py ask_travel "Hue co nhung hoat dong gi?"
+```
+
+Co the thay doi so chunk duoc dua vao Context:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py ask_travel "Di Hoi An tu Da Nang mat bao lau?" --top-k 3
+```
+
+Command hien thi cau tra loi va cac `title`/`source` cua chunks da duoc dung.
+Neu Knowledge Base khong co du thong tin, chatbot tra ve:
+`Knowledge Base hien chua co du thong tin.`
+
 ## Chay Server
 
 ```powershell

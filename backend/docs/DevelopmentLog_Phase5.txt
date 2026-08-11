@@ -1,0 +1,52 @@
+# Giai đoạn 5 — RAG Chat
+
+## Mục tiêu
+
+Hoàn thiện luồng hỏi đáp dựa trên Knowledge Base:
+
+```text
+Câu hỏi
+→ Retriever
+→ Context
+→ PromptTemplate
+→ Gemini Chat
+→ Câu trả lời + nguồn
+```
+
+Giai đoạn này chưa tạo REST API hoặc lưu lịch sử hội thoại. API sẽ được thực
+hiện ở Giai đoạn 6.
+
+## Thay đổi chính
+
+- Thêm `GEMINI_CHAT_MODEL` với mặc định `gemini-3.5-flash-lite`.
+- Tạo `chatbot/rag/rag_chain.py` với:
+  - Prompt tiếng Việt chỉ sử dụng Context.
+  - `get_chat_model()` dùng Gemini Chat với `temperature=0`.
+  - `format_context()` giữ nội dung và metadata của chunks.
+  - `RAGResult` lưu câu trả lời cùng documents đã dùng.
+  - `answer_question()` nối Retrieval với Prompt và Gemini.
+- Tạo command `ask_travel` để thử RAG từ terminal.
+- Cập nhật README với cách chạy RAG Chat.
+
+## Kiểm thử tự động
+
+- `manage.py check`: thành công.
+- 17 unit test: thành công.
+- Unit test không gọi Gemini API thật; factory, prompt, Retrieval, fallback,
+  câu trả lời rỗng và command đều dùng mock.
+
+## Smoke test với Gemini thật
+
+Đã chạy thành công sau khi cho phép kết nối Gemini API:
+
+1. `Huế có những hoạt động gì?`
+   - Trả lời được từ tài liệu hoạt động và tổng quan Huế.
+2. `Đi Hội An từ Đà Nẵng mất bao lâu?`
+   - Trả lời được từ FAQ Hội An và hướng dẫn di chuyển.
+3. `Paris có những điểm du lịch nào?`
+   - Trả về `Knowledge Base hiện chưa có đủ thông tin.`
+
+## Kết luận
+
+Phần triển khai và nghiệm thu Giai đoạn 5 đã hoàn tất. Chưa có REST API,
+serializer hoặc conversation history; các phần này thuộc các giai đoạn sau.
