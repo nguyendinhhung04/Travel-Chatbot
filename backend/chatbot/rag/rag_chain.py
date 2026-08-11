@@ -88,9 +88,14 @@ def format_context(documents: list[Document]) -> str:
     return "\n\n---\n\n".join(sections)
 
 
+def build_prompt_template() -> PromptTemplate:
+    """Create the simple grounded-answer prompt used by the RAG chain."""
+    return PromptTemplate.from_template(RAG_PROMPT)
+
+
 def build_rag_chain(*, chat_model: Any | None = None) -> Any:
     """Build the prompt -> Gemini -> text parser chain."""
-    prompt = PromptTemplate.from_template(RAG_PROMPT)
+    prompt = build_prompt_template()
     model = chat_model or get_chat_model()
     return prompt | model | StrOutputParser()
 
@@ -137,6 +142,7 @@ __all__ = [
     "RAG_PROMPT",
     "answer_question",
     "build_rag_chain",
+    "build_prompt_template",
     "format_context",
     "get_chat_model",
 ]

@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 from chatbot.rag.rag_chain import (
     INSUFFICIENT_CONTEXT_MESSAGE,
     answer_question,
+    build_prompt_template,
     format_context,
 )
 from chatbot.rag.retrieval import get_retriever, retrieve_documents
@@ -119,6 +120,21 @@ class RAGChainTests(SimpleTestCase):
         self.assertIn("destinations/hue/activities.md", rendered)
         self.assertIn("Hoat dong", rendered)
         self.assertIn("Co the tham quan Dai Noi Hue.", rendered)
+
+    def test_prompt_template_has_context_and_question_variables(self):
+        prompt = build_prompt_template()
+
+        rendered = prompt.invoke(
+            {
+                "context": "Đại Nội nằm ở thành phố Huế.",
+                "question": "Đại Nội ở đâu?",
+            }
+        ).to_string()
+
+        self.assertIn("Đại Nội nằm ở thành phố Huế.", rendered)
+        self.assertIn("Đại Nội ở đâu?", rendered)
+        self.assertIn("Chỉ trả lời dựa trên Context", rendered)
+        self.assertIn(INSUFFICIENT_CONTEXT_MESSAGE, rendered)
 
     @patch("chatbot.rag.rag_chain.retrieve_documents")
     def test_answer_question_passes_context_to_chain(self, retrieve_mock):
