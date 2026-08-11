@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
 
 from .vector_store import get_vector_store
@@ -40,4 +41,21 @@ def get_retriever(
     )
 
 
-__all__ = ["get_retriever"]
+def retrieve_documents(
+    question: str,
+    *,
+    retriever: VectorStoreRetriever | None = None,
+    top_k: int | None = None,
+) -> list[Document]:
+    """Search the knowledge base and return the most relevant documents."""
+    cleaned_question = question.strip()
+    if not cleaned_question:
+        raise ValueError("question must not be empty")
+
+    active_retriever = (
+        retriever if retriever is not None else get_retriever(top_k=top_k)
+    )
+    return active_retriever.invoke(cleaned_question)
+
+
+__all__ = ["get_retriever", "retrieve_documents"]
