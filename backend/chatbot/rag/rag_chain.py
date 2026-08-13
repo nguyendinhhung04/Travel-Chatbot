@@ -99,7 +99,7 @@ def build_rag_chain(*, chat_model: Any | None = None) -> Any:
     model = chat_model or get_chat_model()
     return prompt | model | StrOutputParser()
 
-
+#Main function
 def answer_question(
     question: str,
     *,
@@ -112,6 +112,7 @@ def answer_question(
     if not cleaned_question:
         raise ValueError("question must not be empty")
 
+    #Get the K documents from KB that most similar to the question
     documents = retrieve_documents(
         cleaned_question,
         retriever=retriever,

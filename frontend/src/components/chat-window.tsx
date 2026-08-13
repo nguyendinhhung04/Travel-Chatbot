@@ -56,10 +56,17 @@ export default function ChatWindow() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const endOfMessagesRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
+    const messagesElement = messagesRef.current;
+
+    if (!messagesElement) return;
+
+    messagesElement.scrollTo({
+      top: messagesElement.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages, loading, error]);
 
   async function sendMessage() {
@@ -119,7 +126,12 @@ export default function ChatWindow() {
         <span className="status-pill"><span className="status-dot" /> Sẵn sàng</span>
       </header>
 
-      <div className="messages" aria-live="polite" aria-label="Lịch sử trò chuyện">
+      <div
+        ref={messagesRef}
+        className="messages"
+        aria-live="polite"
+        aria-label="Lịch sử trò chuyện"
+      >
         {messages.length === 0 ? (
           <ChatEmptyState
             suggestions={SUGGESTIONS}
@@ -130,7 +142,6 @@ export default function ChatWindow() {
         )}
         {error ? <p className="error-message" role="alert">{error}</p> : null}
         {loading ? <p className="loading-message">Đang trả lời<span className="loading-dots" aria-hidden="true">...</span></p> : null}
-        <div ref={endOfMessagesRef} />
       </div>
 
       <ChatComposer
