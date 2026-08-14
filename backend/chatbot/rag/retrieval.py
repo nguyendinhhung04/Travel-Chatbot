@@ -33,11 +33,16 @@ def get_retriever(
     ``vector_store`` can be supplied by tests or by another caller. When it is
     omitted, the configured travel knowledge collection is opened automatically.
     """
+    from django.conf import settings
+
     resolved_top_k = _resolve_top_k(top_k)
     store = vector_store if vector_store is not None else get_vector_store()
     return store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": resolved_top_k},
+        search_type="similarity_score_threshold",
+        search_kwargs={
+            "k": resolved_top_k,
+            "score_threshold": settings.RAG_RELEVANCE_THRESHOLD,
+        },
     )
 
 

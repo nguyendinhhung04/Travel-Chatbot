@@ -38,7 +38,9 @@ Chay lai lan 2 de kiem tra dong bo on dinh. Neu du lieu khong doi, output nen co
 ## Thu Retrieval
 
 Retrieval tim cac chunk gan voi cau hoi nhat trong ChromaDB. `Top K` la so
-chunk duoc tra ve; mac dinh la 5.
+chunk ung vien toi da; mac dinh la 5. He thong chi giu cac chunk co relevance
+score tu `0.5` tro len. Vi vay so chunk thuc te co the it hon `Top K`, hoac bang
+0 neu khong co chunk nao du lien quan.
 
 Tren PowerShell, dat encoding UTF-8 de hien thi tieng Viet dung:
 

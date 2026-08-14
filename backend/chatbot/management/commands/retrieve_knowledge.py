@@ -46,7 +46,8 @@ class Command(BaseCommand):
 
         if not documents:
             self.stdout.write(
-                "No documents found. Check that the Knowledge Base has been ingested."
+                "No documents met the relevance threshold. "
+                "Also check that the Knowledge Base has been ingested."
             )
             return
 

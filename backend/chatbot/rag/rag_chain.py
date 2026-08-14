@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from django.conf import settings
@@ -16,13 +17,31 @@ from .retrieval import retrieve_documents
 
 INSUFFICIENT_CONTEXT_MESSAGE = "Knowledge Base hiện chưa có đủ thông tin."
 
-RAG_PROMPT = """Bạn là trợ lý du lịch.
+RAG_PROMPT = """Bạn là một tư vấn viên du lịch thân thiện, thực tế và giàu kinh nghiệm.
 
-Chỉ trả lời dựa trên Context được cung cấp. Không tự bịa hoặc bổ sung thông tin
-từ bên ngoài Context. Nếu Context không có đủ thông tin để trả lời Question,
-hãy trả lời chính xác: Knowledge Base hiện chưa có đủ thông tin.
+Hãy trả lời như đang tư vấn trực tiếp cho một du khách, giúp họ dễ dàng quyết định
+nên đi đâu, làm gì và chuẩn bị như thế nào. Trả lời thẳng vào câu hỏi, ưu tiên các
+gợi ý cụ thể, hữu ích và có thể áp dụng. Khi phù hợp, hãy sắp xếp gợi ý theo khu
+vực, thời gian hoặc nhu cầu của du khách; giải thích ngắn gọn lý do hoặc lưu ý
+thực tế nếu Context có thông tin đó.
 
-Trả lời bằng tiếng Việt, ngắn gọn và dễ hiểu.
+Chỉ trả lời dựa trên Context được cung cấp và chỉ sử dụng thông tin có trong
+Context. Không tự bịa, suy đoán hoặc bổ sung thông
+tin từ bên ngoài Context. Không khẳng định bạn đã trực tiếp trải nghiệm địa điểm
+và không nhắc đến Context, tài liệu, Knowledge Base, nguồn dữ liệu, RAG hay cách
+hệ thống tạo ra câu trả lời. Không mở đầu bằng các câu như "Dựa vào tài liệu bạn
+cung cấp", "Theo Context" hoặc "Tài liệu cho biết".
+
+Trả lời bằng tiếng Việt, tự nhiên, gần gũi, ngắn gọn và dễ hiểu. Nếu Context không
+có đủ thông tin để trả lời Question, hãy trả lời chính xác: Knowledge Base hiện chưa có đủ thông tin.
+
+Định dạng câu trả lời bằng plain text thân thiện với khung chat:
+- Không dùng Markdown hoặc ký hiệu Markdown như **, *, #, backtick, bảng hay dấu
+  gạch đầu dòng Markdown.
+- Nếu có nhiều nhóm gợi ý, viết tên nhóm trên một dòng riêng, để một dòng trống
+  giữa các nhóm và dùng ký hiệu • cho từng ý.
+- Không lồng quá nhiều cấp danh sách. Mỗi ý nên là một đoạn ngắn, rõ ràng và tự
+  nhiên.
 
 Context:
 {context}
@@ -93,6 +112,33 @@ def build_prompt_template() -> PromptTemplate:
     return PromptTemplate.from_template(RAG_PROMPT)
 
 
+def normalize_answer(answer: str) -> str:
+    """Make model output readable in the frontend's plain-text message bubble."""
+    normalized_lines: list[str] = []
+    previous_line_was_blank = False
+
+    for raw_line in answer.strip().splitlines():
+        line = raw_line.strip()
+
+        if not line:
+            if normalized_lines and not previous_line_was_blank:
+                normalized_lines.append("")
+            previous_line_was_blank = True
+            continue
+
+        line = re.sub(r"^#{1,6}\s+", "", line)
+        line = re.sub(r"^[-*+]\s+", "• ", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"__(.+?)__", r"\1", line)
+        line = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"\1", line)
+        line = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"\1", line)
+
+        normalized_lines.append(line)
+        previous_line_was_blank = False
+
+    return "\n".join(normalized_lines).strip()
+
+
 def build_rag_chain(*, chat_model: Any | None = None) -> Any:
     """Build the prompt -> Gemini -> text parser chain."""
     prompt = build_prompt_template()
@@ -134,7 +180,11 @@ def answer_question(
     if not isinstance(answer, str) or not answer.strip():
         raise RuntimeError("Gemini returned an empty answer")
 
-    return RAGResult(answer=answer.strip(), documents=documents)
+    normalized_answer = normalize_answer(answer)
+    if not normalized_answer:
+        raise RuntimeError("Gemini returned an empty answer")
+
+    return RAGResult(answer=normalized_answer, documents=documents)
 
 
 __all__ = [
@@ -146,4 +196,5 @@ __all__ = [
     "build_prompt_template",
     "format_context",
     "get_chat_model",
+    "normalize_answer",
 ]

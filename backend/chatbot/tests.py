@@ -5,6 +5,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, override_settings
 from langchain_core.documents import Document
+from langchain_core.vectorstores import VectorStore
 
 from chatbot.rag.rag_chain import (
     INSUFFICIENT_CONTEXT_MESSAGE,
@@ -16,8 +17,26 @@ from chatbot.rag.rag_chain import (
 from chatbot.rag.retrieval import get_retriever, retrieve_documents
 
 
+class StubScoredVectorStore(VectorStore):
+    """Return fixed relevance scores without calling an embedding service."""
+
+    def __init__(self, documents_and_scores):
+        self.documents_and_scores = documents_and_scores
+
+    def similarity_search(self, query, k=4, **kwargs):
+        return [document for document, _ in self.documents_and_scores[:k]]
+
+    @classmethod
+    def from_texts(cls, texts, embedding, metadatas=None, **kwargs):
+        raise NotImplementedError
+
+    def _similarity_search_with_relevance_scores(self, query, k=4, **kwargs):
+        return self.documents_and_scores[:k]
+
+
 class RetrievalTests(SimpleTestCase):
-    def test_get_retriever_uses_configured_top_k(self):
+    @override_settings(RAG_RETRIEVAL_TOP_K=5, RAG_RELEVANCE_THRESHOLD=0.5)
+    def test_get_retriever_uses_configured_top_k_and_threshold(self):
         vector_store = MagicMock()
         expected_retriever = MagicMock()
         vector_store.as_retriever.return_value = expected_retriever
@@ -26,19 +45,34 @@ class RetrievalTests(SimpleTestCase):
 
         self.assertIs(result, expected_retriever)
         vector_store.as_retriever.assert_called_once_with(
-            search_type="similarity",
-            search_kwargs={"k": 5},
+            search_type="similarity_score_threshold",
+            search_kwargs={"k": 5, "score_threshold": 0.5},
         )
 
+    @override_settings(RAG_RELEVANCE_THRESHOLD=0.5)
     def test_get_retriever_accepts_custom_top_k(self):
         vector_store = MagicMock()
 
         get_retriever(vector_store=vector_store, top_k=3)
 
         vector_store.as_retriever.assert_called_once_with(
-            search_type="similarity",
-            search_kwargs={"k": 3},
+            search_type="similarity_score_threshold",
+            search_kwargs={"k": 3, "score_threshold": 0.5},
         )
+
+    @override_settings(RAG_RETRIEVAL_TOP_K=5, RAG_RELEVANCE_THRESHOLD=0.5)
+    def test_retriever_filters_scores_below_threshold_and_keeps_boundary(self):
+        below = Document(page_content="below")
+        boundary = Document(page_content="boundary")
+        above = Document(page_content="above")
+        vector_store = StubScoredVectorStore(
+            [(above, 0.8), (boundary, 0.5), (below, 0.49)]
+        )
+
+        retriever = get_retriever(vector_store=vector_store)
+        documents = retriever.invoke("Hue co gi?")
+
+        self.assertEqual(documents, [above, boundary])
 
     def test_get_retriever_rejects_invalid_top_k(self):
         vector_store = MagicMock()
@@ -88,6 +122,17 @@ class RetrievalTests(SimpleTestCase):
         self.assertIn("Results: 1", rendered)
         self.assertIn("destinations/hue/overview.md", rendered)
         self.assertIn("Tong quan du lich Hue", rendered)
+
+    @patch("chatbot.management.commands.retrieve_knowledge.retrieve_documents")
+    def test_retrieve_command_explains_when_no_document_meets_threshold(
+        self, retrieve_mock
+    ):
+        retrieve_mock.return_value = []
+        output = StringIO()
+
+        call_command("retrieve_knowledge", "Paris co gi?", stdout=output)
+
+        self.assertIn("No documents met the relevance threshold", output.getvalue())
 
 
 class RAGChainTests(SimpleTestCase):
@@ -206,6 +251,30 @@ class RAGChainTests(SimpleTestCase):
 
         with self.assertRaises(ValueError):
             get_chat_model()
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class ChatAPITests(SimpleTestCase):
+    @patch("chatbot.views.answer_question")
+    def test_no_relevant_documents_returns_fallback_without_sources(
+        self, answer_mock
+    ):
+        answer_mock.return_value = RAGResult(
+            answer=INSUFFICIENT_CONTEXT_MESSAGE,
+            documents=[],
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={"message": "Paris co gi?"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": []},
+        )
 
 
 class AskTravelCommandTests(SimpleTestCase):
