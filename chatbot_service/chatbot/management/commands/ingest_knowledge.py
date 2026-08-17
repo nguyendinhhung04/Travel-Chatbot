@@ -65,7 +65,12 @@ class Command(BaseCommand):
             embedding_model = get_embedding_model()
             dimension = verify_embedding(embedding_model)
             vector_store = get_vector_store(embedding_model=embedding_model)
-            stats = sync_vector_store(vector_store, chunks)
+            stats = sync_vector_store(
+                vector_store,
+                chunks,
+                batch_size=50,
+                batch_pause_seconds=65,
+            )
             expected_ids = collect_chunk_ids(chunks)
             verify_vector_store(expected_ids, embedding_model=embedding_model)
         except Exception as exc:

@@ -19,7 +19,7 @@ Frontend là thư mục ngang hàng với backend:
 
 ```text
 TestChatbot/
-├── backend/                 # Django hiện có
+├── chatbot_service/         # Django hiện có
 └── frontend/                # Next.js cần tạo
 ```
 

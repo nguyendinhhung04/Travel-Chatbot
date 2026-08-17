@@ -314,3 +314,51 @@ class AskTravelCommandTests(SimpleTestCase):
 
         with self.assertRaisesMessage(CommandError, "question must not be empty"):
             call_command("ask_travel", "   ", stdout=StringIO())
+
+
+class IngestKnowledgeCommandTests(SimpleTestCase):
+    def test_command_pauses_between_embedding_batches(self):
+        documents = [Document(page_content="Travel knowledge")]
+        chunks = [Document(page_content="Travel chunk")]
+        embedding_model = MagicMock()
+        vector_store = MagicMock()
+        stats = MagicMock(added=1, unchanged=0, deleted=0)
+
+        with (
+            patch(
+                "chatbot.management.commands.ingest_knowledge."
+                "load_markdown_documents",
+                return_value=documents,
+            ),
+            patch(
+                "chatbot.management.commands.ingest_knowledge.split_documents",
+                return_value=chunks,
+            ),
+            patch(
+                "chatbot.management.commands.ingest_knowledge.get_embedding_model",
+                return_value=embedding_model,
+            ),
+            patch(
+                "chatbot.management.commands.ingest_knowledge.verify_embedding",
+                return_value=3072,
+            ),
+            patch(
+                "chatbot.management.commands.ingest_knowledge.get_vector_store",
+                return_value=vector_store,
+            ),
+            patch(
+                "chatbot.management.commands.ingest_knowledge.sync_vector_store",
+                return_value=stats,
+            ) as sync_mock,
+            patch(
+                "chatbot.management.commands.ingest_knowledge.verify_vector_store"
+            ),
+        ):
+            call_command("ingest_knowledge", stdout=StringIO())
+
+        sync_mock.assert_called_once_with(
+            vector_store,
+            chunks,
+            batch_size=50,
+            batch_pause_seconds=65,
+        )
