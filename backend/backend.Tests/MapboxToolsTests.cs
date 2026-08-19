@@ -47,6 +47,14 @@ public sealed class MapboxToolsTests
         Assert.Equal("active", place.OperationalStatus);
         Assert.Equal(125.5, place.DistanceMeters);
         Assert.Equal(3.2, place.EtaMinutes);
+        Assert.True(
+            data.RawResponse
+                .GetProperty("features")[0]
+                .GetProperty("properties")
+                .GetProperty("metadata")
+                .GetProperty("ignored")
+                .GetBoolean());
+        Assert.Equal("ignored", data.RawResponse.GetProperty("response_id").GetString());
     }
 
     [Fact]
@@ -82,7 +90,7 @@ public sealed class MapboxToolsTests
     }
 
     [Fact]
-    public async Task ListCategoriesTool_MapsOnlyFieldsNeededByChatbot()
+    public async Task ListCategoriesTool_MapsChatbotFieldsAndPreservesRawResponse()
     {
         var client = new StubMapboxClient
         {
@@ -113,6 +121,10 @@ public sealed class MapboxToolsTests
         var category = Assert.Single(data.Categories);
         Assert.Equal("restaurant", category.CanonicalId);
         Assert.Equal("Restaurant", category.Name);
+        Assert.Equal(
+            "restaurant",
+            data.RawResponse.GetProperty("listItems")[0].GetProperty("icon").GetString());
+        Assert.Equal("internal", data.RawResponse.GetProperty("version").GetString());
     }
 
     [Fact]

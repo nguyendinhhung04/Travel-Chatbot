@@ -211,3 +211,24 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+
+# Show the exact message payload immediately before each Gemini request in the
+# Django development terminal. Prompt logging is guarded by DEBUG in the
+# orchestrator because it may contain user questions and tool response data.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'chatbot.orchestrator': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

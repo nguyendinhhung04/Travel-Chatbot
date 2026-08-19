@@ -2,11 +2,13 @@
 
 import json
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from langchain_core.messages import AIMessage, ToolMessage
 
 from chatbot.orchestrator import (
     ChatOrchestrator,
+    FINAL_SYNTHESIS_INSTRUCTION,
+    SYSTEM_PROMPT,
     ToolInfrastructureError,
 )
 from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
@@ -14,6 +16,53 @@ from chatbot.tools.registry import ToolExecution
 
 
 class ChatOrchestratorTests(SimpleTestCase):
+    def test_system_prompt_requires_available_location_contact_details(self):
+        self.assertIn("results[].fullAddress", SYSTEM_PROMPT)
+        self.assertIn("Giờ mở cửa", SYSTEM_PROMPT)
+        self.assertIn("phone", SYSTEM_PROMPT)
+        self.assertIn("website", SYSTEM_PROMPT)
+        self.assertIn("rawResponse", SYSTEM_PROMPT)
+        self.assertIn("thực sự có giá trị", SYSTEM_PROMPT)
+        self.assertIn("quy tắc hiển thị chi tiết địa điểm", FINAL_SYNTHESIS_INSTRUCTION)
+
+    @override_settings(DEBUG=True)
+    def test_logs_messages_before_sending_each_request_to_gemini(self):
+        registry = StubRegistry(
+            {
+                "mapbox_forward_search": ToolExecution(
+                    content=(
+                        '{"success":true,"data":{"results":'
+                        '[{"name":"Highlands Coffee"}]}}'
+                    ),
+                    sources=(),
+                    success=True,
+                    system_failure=False,
+                )
+            }
+        )
+        model = StubChatModel(
+            bound_responses=[
+                tool_call_message(
+                    "mapbox_forward_search",
+                    {"q": "Highlands Coffee", "limit": 10},
+                    "1",
+                ),
+                AIMessage(content="Đã tìm thấy Highlands Coffee."),
+            ]
+        )
+
+        with self.assertLogs("chatbot.orchestrator", level="INFO") as logs:
+            ChatOrchestrator(model, registry, max_tool_calls=3).answer(
+                "Tìm Highlands Coffee"
+            )
+
+        rendered_logs = "\n".join(logs.output)
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("Gemini request prompt [tool_selection]", rendered_logs)
+        self.assertIn("Tìm Highlands Coffee", rendered_logs)
+        self.assertIn('"q": "Highlands Coffee"', rendered_logs)
+        self.assertIn("results", rendered_logs)
+
     def test_direct_greeting_returns_without_executing_tools(self):
         model = StubChatModel(bound_responses=[AIMessage(content=" Xin chào! ")])
         registry = StubRegistry()
@@ -250,4 +299,3 @@ class StubChatModel:
         if not self.final_responses:
             raise AssertionError("No final response configured")
         return self.final_responses.pop(0)
-

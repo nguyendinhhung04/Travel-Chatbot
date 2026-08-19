@@ -183,7 +183,8 @@ class RAGChainTests(SimpleTestCase):
 
         self.assertIn("Đại Nội nằm ở thành phố Huế.", rendered)
         self.assertIn("Đại Nội ở đâu?", rendered)
-        self.assertIn("Chỉ trả lời dựa trên Context", rendered)
+        self.assertIn("Ưu tiên sử dụng thông tin trong Context", rendered)
+        self.assertIn("có thể dùng kiến thức của mình để bổ sung", rendered)
         self.assertIn(INSUFFICIENT_CONTEXT_MESSAGE, rendered)
 
     @patch("chatbot.rag.rag_chain.retrieve_documents")

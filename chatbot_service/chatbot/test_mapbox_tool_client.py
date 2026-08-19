@@ -65,6 +65,8 @@ class MapboxToolClientTests(SimpleTestCase):
         self.assertTrue(categories.success)
         self.assertTrue(category_search.success)
         self.assertTrue(reverse.success)
+        self.assertEqual(forward.data.raw_response["type"], "FeatureCollection")
+        self.assertEqual(categories.data.raw_response["version"], "1")
         self.assertEqual(
             requests,
             [
@@ -164,6 +166,11 @@ PLACE_SUCCESS_RESPONSE = {
     "data": {
         "attribution": "Mapbox",
         "results": [],
+        "rawResponse": {
+            "type": "FeatureCollection",
+            "features": [],
+            "attribution": "Mapbox",
+        },
     },
     "errorCode": None,
     "errorMessage": None,
@@ -174,6 +181,11 @@ CATEGORY_SUCCESS_RESPONSE = {
     "data": {
         "attribution": "Mapbox",
         "categories": [],
+        "rawResponse": {
+            "listItems": [],
+            "attribution": "Mapbox",
+            "version": "1",
+        },
     },
     "errorCode": None,
     "errorMessage": None,

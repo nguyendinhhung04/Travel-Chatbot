@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -105,6 +105,7 @@ class MapboxPlaceItem(ToolModel):
 class MapboxPlaceToolData(ToolModel):
     attribution: NonEmptyString
     results: list[MapboxPlaceItem]
+    raw_response: dict[str, Any] = Field(alias="rawResponse")
 
 
 class MapboxCategoryItem(ToolModel):
@@ -115,6 +116,7 @@ class MapboxCategoryItem(ToolModel):
 class MapboxCategoryToolData(ToolModel):
     attribution: NonEmptyString
     categories: list[MapboxCategoryItem]
+    raw_response: dict[str, Any] = Field(alias="rawResponse")
 
 
 class ToolResult(ToolModel, Generic[ToolData]):

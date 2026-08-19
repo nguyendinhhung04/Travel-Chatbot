@@ -99,6 +99,20 @@ class ToolResponseModelTests(SimpleTestCase):
                             "etaMinutes": 3.2,
                         }
                     ],
+                    "rawResponse": {
+                        "type": "FeatureCollection",
+                        "features": [
+                            {
+                                "properties": {
+                                    "mapbox_id": "mapbox.poi.1",
+                                    "brand": ["Coffee Brand"],
+                                    "metadata": {"phone": "0123456789"},
+                                }
+                            }
+                        ],
+                        "attribution": "Mapbox",
+                        "response_id": "response-1",
+                    },
                 },
                 "errorCode": None,
                 "errorMessage": None,
@@ -108,6 +122,13 @@ class ToolResponseModelTests(SimpleTestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.data.results[0].mapbox_id, "mapbox.poi.1")
         self.assertEqual(result.data.results[0].distance_meters, 120.5)
+        self.assertEqual(
+            result.data.raw_response["features"][0]["properties"]["metadata"][
+                "phone"
+            ],
+            "0123456789",
+        )
+        self.assertEqual(result.data.raw_response["response_id"], "response-1")
 
     def test_category_result_and_failure_envelope_parse_camel_case(self):
         success = ToolResult[MapboxCategoryToolData].model_validate(
@@ -118,6 +139,19 @@ class ToolResponseModelTests(SimpleTestCase):
                     "categories": [
                         {"canonicalId": "restaurant", "name": "Restaurant"}
                     ],
+                    "rawResponse": {
+                        "listItems": [
+                            {
+                                "canonical_id": "restaurant",
+                                "name": "Restaurant",
+                                "icon": "restaurant",
+                                "version": "1",
+                                "uuid": "category-1",
+                            }
+                        ],
+                        "attribution": "Mapbox",
+                        "version": "1",
+                    },
                 },
             }
         )
@@ -131,6 +165,10 @@ class ToolResponseModelTests(SimpleTestCase):
         )
 
         self.assertEqual(success.data.categories[0].canonical_id, "restaurant")
+        self.assertEqual(
+            success.data.raw_response["listItems"][0]["icon"],
+            "restaurant",
+        )
         self.assertEqual(failure.error_code, "mapbox_timeout")
         self.assertIsNone(failure.data)
 
@@ -174,4 +212,3 @@ class RagAndSourceModelTests(SimpleTestCase):
         self.assertEqual(rag_data.chunks[0].heading, "Overview")
         self.assertIsInstance(mapbox_source, MapboxSource)
         self.assertEqual(mapbox_source.source, "Mapbox Search API")
-

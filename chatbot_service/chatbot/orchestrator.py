@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,9 @@ from chatbot.rag.rag_chain import get_chat_model, normalize_answer
 from chatbot.tools.mapbox_client import MapboxToolClient
 from chatbot.tools.models import ChatSource
 from chatbot.tools.registry import ToolExecution, ToolRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """Bạn là trợ lý du lịch tiếng Việt sử dụng các tool được cung cấp.
@@ -27,10 +31,14 @@ Quy tắc bắt buộc:
 - Không tự tạo tên địa điểm, địa chỉ, tọa độ hoặc thông tin không xuất hiện trong tool result.
 - Nếu tool báo arguments không hợp lệ, sửa arguments và thử lại khi còn lượt.
 - Nếu không tìm thấy dữ liệu, nói rõ là chưa tìm thấy; không suy đoán.
+- Khi hiển thị các địa điểm tìm được từ Mapbox, hãy trình bày từng địa điểm riêng và luôn kèm địa chỉ đầy đủ nếu có.
+- Với mỗi địa điểm, ưu tiên địa chỉ từ results[].fullAddress. Đọc giờ mở cửa, phone và website từ feature tương ứng trong rawResponse, bao gồm properties và properties.metadata.
+- Giờ mở cửa phải được rút gọn, dễ đọc, ví dụ "07:00–22:00" hoặc "T2–CN: 07:00–22:00", nhưng phải giữ đúng dữ liệu tool cung cấp.
+- Chỉ hiển thị dòng Giờ mở cửa, Điện thoại hoặc Website khi field tương ứng thực sự có giá trị; không tự suy đoán và không ghi nội dung thay thế như "không có thông tin".
 - Trả lời bằng tiếng Việt, tự nhiên, ngắn gọn và plain text; không dùng bảng hoặc Markdown phức tạp.
 """
 
-FINAL_SYNTHESIS_INSTRUCTION = """Hãy trả lời câu hỏi ban đầu ngay bây giờ bằng cách tổng hợp duy nhất từ các tool result đã có. Không gọi thêm tool, không bịa thông tin và dùng plain text tiếng Việt."""
+FINAL_SYNTHESIS_INSTRUCTION = """Hãy trả lời câu hỏi ban đầu ngay bây giờ bằng cách tổng hợp duy nhất từ các tool result đã có. Không gọi thêm tool, không bịa thông tin, tuân thủ quy tắc hiển thị chi tiết địa điểm trong system prompt và dùng plain text tiếng Việt."""
 
 TOOL_BUDGET_ERROR = "tool_budget_exceeded"
 
@@ -88,7 +96,11 @@ class ChatOrchestrator:
         executed_calls = 0
 
         while True:
-            response = self._invoke_ai_message(self._tool_model, messages)
+            response = self._invoke_ai_message(
+                self._tool_model,
+                messages,
+                stage="tool_selection",
+            )
             messages.append(response)
             tool_calls = response.tool_calls
 
@@ -145,6 +157,7 @@ class ChatOrchestrator:
                 final_response = self._invoke_ai_message(
                     self._chat_model,
                     final_messages,
+                    stage="final_synthesis",
                 )
                 return ChatOrchestratorResult(
                     answer=self._normalized_response_text(final_response),
@@ -152,11 +165,33 @@ class ChatOrchestrator:
                 )
 
     @staticmethod
-    def _invoke_ai_message(model: Any, messages: list[Any]) -> AIMessage:
+    def _invoke_ai_message(
+        model: Any,
+        messages: list[Any],
+        *,
+        stage: str,
+    ) -> AIMessage:
+        if settings.DEBUG:
+            logger.info(
+                "Gemini request prompt [%s]:\n%s",
+                stage,
+                ChatOrchestrator._format_messages_for_log(messages),
+            )
         response = model.invoke(messages)
         if not isinstance(response, AIMessage):
             raise RuntimeError("Gemini returned an unsupported response type")
         return response
+
+    @staticmethod
+    def _format_messages_for_log(messages: list[Any]) -> str:
+        payload: list[Any] = []
+        for message in messages:
+            if hasattr(message, "model_dump"):
+                payload.append(message.model_dump(mode="json"))
+            else:
+                payload.append(str(message))
+
+        return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
     @staticmethod
     def _normalized_response_text(response: AIMessage) -> str:

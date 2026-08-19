@@ -12,7 +12,9 @@ internal static class MapboxToolResponseParser
 
     public static MapboxPlaceToolData ParsePlaces(string json)
     {
-        var response = JsonSerializer.Deserialize<FeatureCollectionResponse>(json, JsonOptions)
+        using var document = JsonDocument.Parse(json);
+        var rawResponse = document.RootElement.Clone();
+        var response = rawResponse.Deserialize<FeatureCollectionResponse>(JsonOptions)
                        ?? throw InvalidResponse();
 
         if (response.Features is null || string.IsNullOrWhiteSpace(response.Attribution))
@@ -21,12 +23,14 @@ internal static class MapboxToolResponseParser
         }
 
         var results = response.Features.Select(ParsePlace).ToArray();
-        return new MapboxPlaceToolData(response.Attribution, results);
+        return new MapboxPlaceToolData(response.Attribution, results, rawResponse);
     }
 
     public static MapboxCategoryToolData ParseCategories(string json)
     {
-        var response = JsonSerializer.Deserialize<CategoryListResponse>(json, JsonOptions)
+        using var document = JsonDocument.Parse(json);
+        var rawResponse = document.RootElement.Clone();
+        var response = rawResponse.Deserialize<CategoryListResponse>(JsonOptions)
                        ?? throw InvalidResponse();
 
         if (response.ListItems is null || string.IsNullOrWhiteSpace(response.Attribution))
@@ -44,7 +48,7 @@ internal static class MapboxToolResponseParser
             return new MapboxCategoryItem(item.CanonicalId, item.Name);
         }).ToArray();
 
-        return new MapboxCategoryToolData(response.Attribution, categories);
+        return new MapboxCategoryToolData(response.Attribution, categories, rawResponse);
     }
 
     private static MapboxPlaceItem ParsePlace(Feature feature)

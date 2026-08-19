@@ -85,7 +85,15 @@ class ToolRegistryTests(SimpleTestCase):
             MapboxPlaceToolData
         ](
             success=True,
-            data=MapboxPlaceToolData(attribution="Mapbox", results=[]),
+            data=MapboxPlaceToolData(
+                attribution="Mapbox",
+                results=[],
+                raw_response={
+                    "type": "FeatureCollection",
+                    "features": [],
+                    "attribution": "Mapbox",
+                },
+            ),
         )
 
         execution = self.registry.execute(
@@ -96,6 +104,11 @@ class ToolRegistryTests(SimpleTestCase):
         self.assertTrue(execution.success)
         self.assertEqual(execution.sources[0].type, "mapbox")
         self.assertEqual(execution.sources[0].attribution, "Mapbox")
+        payload = json.loads(execution.content)
+        self.assertEqual(
+            payload["data"]["rawResponse"]["type"],
+            "FeatureCollection",
+        )
         request = self.mapbox_client.forward_search.call_args.args[0]
         self.assertEqual(request.q, "coffee")
 
@@ -132,4 +145,3 @@ class ToolRegistryTests(SimpleTestCase):
         self.assertTrue(execution.system_failure)
         self.assertNotIn("provider-secret", execution.content)
         self.assertNotIn("provider-secret", " ".join(logs.output))
-
