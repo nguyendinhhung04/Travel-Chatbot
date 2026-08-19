@@ -8,7 +8,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .rag.rag_chain import answer_question
+from .orchestrator import orchestrate_chat
 from .serializers import ChatRequestSerializer
 
 
@@ -38,7 +38,7 @@ def build_sources(documents: Iterable[Document]) -> list[dict[str, str]]:
 
 
 class ChatAPIView(APIView):
-    """Answer one travel question with the existing RAG pipeline."""
+    """Answer one travel question with Gemini-directed tools."""
 
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
@@ -46,7 +46,7 @@ class ChatAPIView(APIView):
 
         message = serializer.validated_data["message"]
         try:
-            result = answer_question(message)
+            result = orchestrate_chat(message)
         except Exception:
             logger.exception("Travel chatbot request failed")
             return Response(
@@ -57,7 +57,9 @@ class ChatAPIView(APIView):
         return Response(
             {
                 "answer": result.answer,
-                "sources": build_sources(result.documents),
+                "sources": [
+                    source.model_dump(mode="json") for source in result.sources
+                ],
             },
             status=status.HTTP_200_OK,
         )

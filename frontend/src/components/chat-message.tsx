@@ -17,9 +17,11 @@ export default function ChatMessage({ message }: ChatMessageProps) {
             <span className="sources-heading">Nguồn tham khảo</span>
             <ul>
               {message.sources.map((source) => (
-                <li key={`${source.title}-${source.source}`}>
+                <li key={`${source.type}-${source.title}-${source.source}`}>
                   <span className="source-title">{source.title}</span>
-                  <span className="source-path">{source.source}</span>
+                  <span className="source-path">
+                    {source.type === "mapbox" ? source.attribution : source.source}
+                  </span>
                 </li>
               ))}
             </ul>

@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, override_settings
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
+from chatbot.orchestrator import ChatOrchestratorResult
 from chatbot.rag.rag_chain import (
     INSUFFICIENT_CONTEXT_MESSAGE,
     RAGResult,
@@ -15,6 +16,8 @@ from chatbot.rag.rag_chain import (
     format_context,
 )
 from chatbot.rag.retrieval import get_retriever, retrieve_documents
+from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
+from chatbot.views import CHAT_SERVICE_ERROR
 
 
 class StubScoredVectorStore(VectorStore):
@@ -255,13 +258,30 @@ class RAGChainTests(SimpleTestCase):
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class ChatAPITests(SimpleTestCase):
-    @patch("chatbot.views.answer_question")
-    def test_no_relevant_documents_returns_fallback_without_sources(
-        self, answer_mock
+    @patch("chatbot.views.orchestrate_chat")
+    def test_invalid_messages_return_bad_request_without_orchestration(
+        self,
+        orchestrate_mock,
     ):
-        answer_mock.return_value = RAGResult(
+        for payload in ({}, {"message": "   "}, {"message": 123}):
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    "/api/chat/",
+                    data=payload,
+                    content_type="application/json",
+                )
+
+                self.assertEqual(response.status_code, 400)
+
+        orchestrate_mock.assert_not_called()
+
+    @patch("chatbot.views.orchestrate_chat")
+    def test_no_relevant_documents_returns_fallback_without_sources(
+        self, orchestrate_mock
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
             answer=INSUFFICIENT_CONTEXT_MESSAGE,
-            documents=[],
+            sources=[],
         )
 
         response = self.client.post(
@@ -275,6 +295,62 @@ class ChatAPITests(SimpleTestCase):
             response.json(),
             {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": []},
         )
+
+    @patch("chatbot.views.orchestrate_chat")
+    def test_success_serializes_typed_knowledge_and_mapbox_sources(
+        self,
+        orchestrate_mock,
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
+            answer="Câu trả lời",
+            sources=[
+                KnowledgeBaseSource(title="Huế", source="hue.md"),
+                MapboxSource(attribution="© Mapbox"),
+            ],
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={"message": "Huế có gì?"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "answer": "Câu trả lời",
+                "sources": [
+                    {
+                        "type": "knowledge_base",
+                        "title": "Huế",
+                        "source": "hue.md",
+                    },
+                    {
+                        "type": "mapbox",
+                        "title": "Mapbox",
+                        "source": "Mapbox Search API",
+                        "attribution": "© Mapbox",
+                    },
+                ],
+            },
+        )
+
+    @patch("chatbot.views.orchestrate_chat", side_effect=RuntimeError("failed"))
+    def test_orchestrator_failure_returns_service_unavailable(
+        self,
+        orchestrate_mock,
+    ):
+        with self.assertLogs("chatbot.views", level="ERROR"):
+            response = self.client.post(
+                "/api/chat/",
+                data={"message": "Huế có gì?"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"error": CHAT_SERVICE_ERROR})
+        orchestrate_mock.assert_called_once_with("Huế có gì?")
 
 
 class AskTravelCommandTests(SimpleTestCase):

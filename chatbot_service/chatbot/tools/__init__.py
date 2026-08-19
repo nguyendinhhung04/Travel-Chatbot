@@ -1,5 +1,6 @@
 """Typed models and services used by chatbot tools."""
 
+from .mapbox_client import MapboxToolClient
 from .models import (
     ChatSource,
     KnowledgeBaseSource,
@@ -17,6 +18,8 @@ from .models import (
     SearchTravelKnowledgeInput,
     ToolResult,
 )
+from .rag_tool import search_travel_knowledge
+from .registry import ToolExecution, ToolRegistry
 
 __all__ = [
     "ChatSource",
@@ -26,6 +29,7 @@ __all__ = [
     "MapboxCategoryToolData",
     "MapboxForwardSearchInput",
     "MapboxListCategoriesInput",
+    "MapboxToolClient",
     "MapboxPlaceItem",
     "MapboxPlaceToolData",
     "MapboxReverseLookupInput",
@@ -34,4 +38,7 @@ __all__ = [
     "RagToolData",
     "SearchTravelKnowledgeInput",
     "ToolResult",
+    "ToolExecution",
+    "ToolRegistry",
+    "search_travel_knowledge",
 ]
