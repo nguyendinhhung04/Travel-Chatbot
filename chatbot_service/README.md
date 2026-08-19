@@ -15,6 +15,10 @@ Tao file `.env`:
 ```env
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+GEMINI_CHAT_MODEL=gemini-3.5-flash-lite
+MAPBOX_TOOL_BASE_URL=http://localhost:5257
+MAPBOX_TOOL_TIMEOUT_SECONDS=12
+CHATBOT_MAX_TOOL_CALLS=3
 ```
 
 ## Kiem Tra

@@ -2,6 +2,9 @@
 Django==5.2
 djangorestframework==3.17.1
 
+# HTTP clients
+httpx==0.28.1
+
 # Environment variables
 python-dotenv==1.2.2
 PyYAML==6.0.3

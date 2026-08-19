@@ -10,9 +10,12 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
-from pathlib import Path
+import math
 import os
+from pathlib import Path
+from urllib.parse import urlparse
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -35,6 +38,63 @@ GEMINI_EMBEDDING_MODEL = os.getenv(
 GEMINI_CHAT_MODEL = os.getenv(
     'GEMINI_CHAT_MODEL',
     'gemini-3.5-flash-lite',
+)
+
+
+def get_http_url_setting(name: str, default: str) -> str:
+    """Read and validate an HTTP(S) service base URL."""
+    value = os.getenv(name, default).strip().rstrip('/')
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {'http', 'https'}
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ImproperlyConfigured(
+            f'{name} must be an HTTP(S) base URL without a query or fragment.'
+        )
+    return value
+
+
+def get_positive_float_setting(name: str, default: float) -> float:
+    """Read a finite, positive floating-point setting."""
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise ImproperlyConfigured(f'{name} must be a number.') from error
+
+    if not math.isfinite(value) or value <= 0:
+        raise ImproperlyConfigured(f'{name} must be greater than zero.')
+    return value
+
+
+def get_positive_int_setting(name: str, default: int) -> int:
+    """Read a positive integer setting."""
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ImproperlyConfigured(f'{name} must be an integer.') from error
+
+    if value <= 0:
+        raise ImproperlyConfigured(f'{name} must be greater than zero.')
+    return value
+
+
+# ASP.NET typed Mapbox tool service and orchestration limits.
+MAPBOX_TOOL_BASE_URL = get_http_url_setting(
+    'MAPBOX_TOOL_BASE_URL',
+    'http://localhost:5257',
+)
+MAPBOX_TOOL_TIMEOUT_SECONDS = get_positive_float_setting(
+    'MAPBOX_TOOL_TIMEOUT_SECONDS',
+    12,
+)
+CHATBOT_MAX_TOOL_CALLS = get_positive_int_setting(
+    'CHATBOT_MAX_TOOL_CALLS',
+    3,
 )
 
 # RAG pipeline configuration.
