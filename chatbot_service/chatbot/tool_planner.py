@@ -9,6 +9,7 @@ from chatbot.category_resolver import resolve_mapbox_categories
 from chatbot.intent import TravelIntent
 from chatbot.semantic import (
     InterpretationStatus,
+    SearchTargetType,
     SemanticActionType,
     SemanticInterpretation,
 )
@@ -21,7 +22,11 @@ from chatbot.tools.rag_tool import SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME
 
 
 DEFAULT_MAPBOX_RESULT_LIMIT = 5
+DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT = 10
+DEFAULT_MAPBOX_MINIMUM_RATING = 4.0
+DEFAULT_MAPBOX_RANK_STRATEGY = "relevance"
 DEFAULT_MAX_CATEGORIES = 3
+MAPBOX_POI_TYPE = "poi"
 _KILOMETERS_PER_DEGREE = 111.32
 
 _RAG_INTENTS = frozenset(
@@ -109,10 +114,19 @@ def _plan_named_place_calls(
 
     common_arguments = _mapbox_location_arguments(interpretation)
     constraints = interpretation.constraints
-    if constraints.open_now is not None:
-        common_arguments["open_now"] = constraints.open_now
-    if constraints.minimum_rating is not None:
-        common_arguments["minimum_rating"] = constraints.minimum_rating
+    search_target = _forward_search_target(interpretation)
+    common_arguments["types"] = search_target.value
+    common_arguments["rank_strategy"] = (
+        constraints.rank_strategy or DEFAULT_MAPBOX_RANK_STRATEGY
+    )
+    if search_target == SearchTargetType.POI:
+        if constraints.open_now is not None:
+            common_arguments["open_now"] = constraints.open_now
+        common_arguments["minimum_rating"] = (
+            constraints.minimum_rating
+            if constraints.minimum_rating is not None
+            else DEFAULT_MAPBOX_MINIMUM_RATING
+        )
 
     return [
         PlannedToolCall(
@@ -138,18 +152,36 @@ def _plan_category_calls(
         max_categories=max_categories,
     )
     common_arguments = _mapbox_location_arguments(interpretation)
+    constraints = interpretation.constraints
+    minimum_rating = (
+        constraints.minimum_rating
+        if constraints.minimum_rating is not None
+        else DEFAULT_MAPBOX_MINIMUM_RATING
+    )
     return [
         PlannedToolCall(
             MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
             {
                 "category_id": category,
                 "language": "vi",
-                "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
+                "limit": DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT,
+                "types": MAPBOX_POI_TYPE,
+                "minimum_rating": minimum_rating,
                 **common_arguments,
             },
         )
         for category in categories
     ]
+
+
+def _forward_search_target(
+    interpretation: SemanticInterpretation,
+) -> SearchTargetType:
+    if interpretation.entities.search_target is not None:
+        return interpretation.entities.search_target
+    if interpretation.entities.places:
+        return SearchTargetType.POI
+    return SearchTargetType.PLACE
 
 
 def _plan_reverse_call(
@@ -207,8 +239,12 @@ def _deduplicate_calls(
 
 
 __all__ = [
+    "DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT",
+    "DEFAULT_MAPBOX_MINIMUM_RATING",
+    "DEFAULT_MAPBOX_RANK_STRATEGY",
     "DEFAULT_MAPBOX_RESULT_LIMIT",
     "DEFAULT_MAX_CATEGORIES",
+    "MAPBOX_POI_TYPE",
     "PlannedToolCall",
     "plan_tools",
 ]

@@ -53,14 +53,20 @@ class ToolInputModelTests(SimpleTestCase):
         category = MapboxCategorySearchInput(
             category_id=" restaurant ",
             limit=25,
+            minimum_rating=4,
         )
         reverse = MapboxReverseLookupInput(longitude=108.2, latitude=16.1)
 
         self.assertEqual(category.category_id, "restaurant")
+        self.assertEqual(category.minimum_rating, 4.0)
         self.assertEqual(reverse.longitude, 108.2)
 
         for model, values in (
             (MapboxCategorySearchInput, {"category_id": ""}),
+            (
+                MapboxCategorySearchInput,
+                {"category_id": "restaurant", "minimum_rating": 5.1},
+            ),
             (MapboxReverseLookupInput, {"longitude": 181, "latitude": 16}),
             (MapboxReverseLookupInput, {"longitude": 108, "latitude": -91}),
         ):
@@ -95,6 +101,8 @@ class ToolResponseModelTests(SimpleTestCase):
                             "operationalStatus": "active",
                             "distanceMeters": 120.5,
                             "etaMinutes": 3.2,
+                            "rating": 4.6,
+                            "popularity": 0.91,
                         }
                     ],
                     "rawResponse": {
@@ -120,6 +128,8 @@ class ToolResponseModelTests(SimpleTestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.data.results[0].mapbox_id, "mapbox.poi.1")
         self.assertEqual(result.data.results[0].distance_meters, 120.5)
+        self.assertEqual(result.data.results[0].rating, 4.6)
+        self.assertEqual(result.data.results[0].popularity, 0.91)
         self.assertEqual(
             result.data.raw_response["features"][0]["properties"]["metadata"][
                 "phone"

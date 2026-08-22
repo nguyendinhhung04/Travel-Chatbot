@@ -81,6 +81,7 @@ class MapboxCategorySearchInput(_MapboxSearchFilters):
             "từ semantic domain. Không dùng địa danh làm category_id."
         )
     )
+    minimum_rating: float | None = Field(default=None, ge=0, le=5)
 
 
 class MapboxReverseLookupInput(ToolModel):
@@ -115,6 +116,8 @@ class MapboxPlaceItem(ToolModel):
     operational_status: str | None = Field(default=None, alias="operationalStatus")
     distance_meters: float | None = Field(default=None, alias="distanceMeters", ge=0)
     eta_minutes: float | None = Field(default=None, alias="etaMinutes", ge=0)
+    rating: float | None = Field(default=None, ge=0, le=5)
+    popularity: float | None = Field(default=None, ge=0)
 
 
 class MapboxPlaceToolData(ToolModel):

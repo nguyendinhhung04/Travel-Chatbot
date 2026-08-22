@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 using Backend.Mapbox;
 
@@ -119,6 +120,10 @@ public sealed record MapboxCategorySearchToolHttpRequest
 
     [JsonPropertyName("exclude_fields")]
     public string? ExcludeFields { get; init; }
+
+    [JsonPropertyName("minimum_rating")]
+    [Range(0, 5)]
+    public double? MinimumRating { get; init; }
 
     public MapboxCategorySearchRequest ToMapboxRequest() => new()
     {

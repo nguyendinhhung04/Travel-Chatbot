@@ -47,6 +47,8 @@ public sealed class MapboxToolsTests
         Assert.Equal("active", place.OperationalStatus);
         Assert.Equal(125.5, place.DistanceMeters);
         Assert.Equal(3.2, place.EtaMinutes);
+        Assert.Equal(4.7, place.Rating);
+        Assert.Equal(0.91, place.Popularity);
         Assert.True(
             data.RawResponse
                 .GetProperty("features")[0]
@@ -111,6 +113,46 @@ public sealed class MapboxToolsTests
         Assert.True(result.Success);
         Assert.Equal("restaurant", client.CategoryId);
         Assert.Same(request, client.CategoryRequest);
+    }
+
+    [Fact]
+    public async Task CategorySearchTool_FiltersRatingSortsPopularityAndReturnsTopFive()
+    {
+        var client = new StubMapboxClient
+        {
+            Response = JsonResponse(CategoryRankingResponse)
+        };
+
+        var result = await new MapboxCategorySearchTool(client).ExecuteAsync(
+            "restaurant",
+            new MapboxCategorySearchRequest { Limit = 10, Types = "poi" },
+            CancellationToken.None,
+            minimumRating: 4.0);
+
+        Assert.True(result.Success);
+        var data = Assert.IsType<MapboxPlaceToolData>(result.Data);
+        Assert.Equal(
+            ["poi-c", "poi-e", "poi-f", "poi-a", "poi-g"],
+            data.Results.Select(place => place.MapboxId));
+        Assert.Null(data.Results[0].Rating);
+        Assert.Equal(0.9, data.Results[0].Popularity);
+        Assert.Equal(8, data.RawResponse.GetProperty("features").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task CategorySearchTool_RejectsInvalidInternalRatingWithoutCallingMapbox()
+    {
+        var client = new StubMapboxClient();
+
+        var result = await new MapboxCategorySearchTool(client).ExecuteAsync(
+            "restaurant",
+            new MapboxCategorySearchRequest(),
+            CancellationToken.None,
+            minimumRating: 5.1);
+
+        Assert.False(result.Success);
+        Assert.Equal("invalid_input", result.ErrorCode);
+        Assert.Equal(0, client.CallCount);
     }
 
     [Fact]
@@ -236,12 +278,29 @@ public sealed class MapboxToolsTests
                 "operational_status": "active",
                 "distance": 125.5,
                 "eta": 3.2,
-                "metadata": { "ignored": true }
+                "metadata": { "ignored": true, "rating": 4.7, "popularity": 0.91 }
               }
             }
           ],
           "attribution": "{{Attribution}}",
           "response_id": "ignored"
+        }
+        """;
+
+    private const string CategoryRankingResponse = $$"""
+        {
+          "type": "FeatureCollection",
+          "features": [
+            { "geometry": { "coordinates": [105.80, 21.00] }, "properties": { "name": "A", "mapbox_id": "poi-a", "feature_type": "poi", "metadata": { "rating": 4.5, "popularity": 0.6 } } },
+            { "geometry": { "coordinates": [105.81, 21.01] }, "properties": { "name": "B", "mapbox_id": "poi-b", "feature_type": "poi", "metadata": { "rating": 3.9, "popularity": 1.0 } } },
+            { "geometry": { "coordinates": [105.82, 21.02] }, "properties": { "name": "C", "mapbox_id": "poi-c", "feature_type": "poi", "metadata": { "popularity": 0.9 } } },
+            { "geometry": { "coordinates": [105.83, 21.03] }, "properties": { "name": "D", "mapbox_id": "poi-d", "feature_type": "poi", "metadata": { "rating": 4.2 } } },
+            { "geometry": { "coordinates": [105.84, 21.04] }, "properties": { "name": "E", "mapbox_id": "poi-e", "feature_type": "poi", "metadata": { "rating": 4.0, "popularity": 0.8 } } },
+            { "geometry": { "coordinates": [105.85, 21.05] }, "properties": { "name": "F", "mapbox_id": "poi-f", "feature_type": "poi", "metadata": { "rating": 5.0, "popularity": 0.7 } } },
+            { "geometry": { "coordinates": [105.86, 21.06] }, "properties": { "name": "G", "mapbox_id": "poi-g", "feature_type": "poi", "metadata": { "rating": 4.7, "popularity": 0.5 } } },
+            { "geometry": { "coordinates": [105.87, 21.07] }, "properties": { "name": "H", "mapbox_id": "poi-h", "feature_type": "poi", "metadata": { "rating": 4.9, "popularity": 0.4 } } }
+          ],
+          "attribution": "{{Attribution}}"
         }
         """;
 

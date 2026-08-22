@@ -17,6 +17,7 @@ from chatbot.semantic import (
     SemanticInterpretation,
     SemanticInterpreter,
     SemanticLocation,
+    SearchTargetType,
     TravelDomain,
     interpret_question,
 )
@@ -32,6 +33,16 @@ class SemanticModelTests(SimpleTestCase):
             interpretation.actions[0].type,
             SemanticActionType.DISCOVER_PLACES,
         )
+
+        named_target = SemanticInterpretation.model_validate(
+            {
+                **interpretation.model_dump(mode="json"),
+                "entities": {"search_target": "city"},
+                "constraints": {"rank_strategy": "distance"},
+            }
+        )
+        self.assertEqual(named_target.entities.search_target, SearchTargetType.CITY)
+        self.assertEqual(named_target.constraints.rank_strategy, "distance")
 
         with self.assertRaises(ValidationError):
             SemanticInterpretation.model_validate(
@@ -161,6 +172,8 @@ class SemanticInterpreterTests(SimpleTestCase):
         self.assertIn("không lưu và không tính route", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("giao thông thời gian thực", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("entities.search_target", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("constraints.rank_strategy=distance", SEMANTIC_SYSTEM_PROMPT)
 
 
 def build_interpretation() -> SemanticInterpretation:

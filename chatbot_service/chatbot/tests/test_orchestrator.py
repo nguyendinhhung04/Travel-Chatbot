@@ -31,6 +31,7 @@ class ChatOrchestratorTests(SimpleTestCase):
     def test_system_prompt_preserves_q_and_a_scope_and_place_safety(self):
         self.assertIn("fullAddress", SYSTEM_PROMPT)
         self.assertIn("rawResponse", SYSTEM_PROMPT)
+        self.assertIn("mapboxId xuất hiện trong data.results", SYSTEM_PROMPT)
         self.assertIn("không tự tạo rating", SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SYSTEM_PROMPT)
         self.assertIn("unsupported", SYSTEM_PROMPT)

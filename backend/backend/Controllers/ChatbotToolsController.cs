@@ -39,7 +39,8 @@ public sealed class ChatbotToolsController(
         var result = await categorySearchTool.ExecuteAsync(
             request.CategoryId ?? string.Empty,
             request.ToMapboxRequest(),
-            cancellationToken);
+            cancellationToken,
+            request.MinimumRating);
         return ToActionResult(result);
     }
 

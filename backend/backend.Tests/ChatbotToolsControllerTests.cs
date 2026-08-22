@@ -93,7 +93,8 @@ public sealed class ChatbotToolsControllerTests
               "types": "poi",
               "poi_category_exclusions": "fast_food",
               "show_closed_pois": false,
-              "exclude_fields": "photos"
+              "exclude_fields": "photos",
+              "minimum_rating": 4.2
             }
             """);
 
@@ -111,6 +112,8 @@ public sealed class ChatbotToolsControllerTests
         Assert.Equal("fast_food", request.PoiCategoryExclusions);
         Assert.False(request.ShowClosedPois);
         Assert.Equal("photos", request.ExcludeFields);
+        Assert.Equal(4.2, httpRequest.MinimumRating);
+        Assert.DoesNotContain("minimum_rating", request.ToQueryParameters());
     }
 
     [Fact]
