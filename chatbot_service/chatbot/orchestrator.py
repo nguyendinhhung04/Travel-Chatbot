@@ -1,80 +1,78 @@
-"""Gemini function-calling loop for the travel chatbot."""
+"""Intent-aware orchestration for the travel question-answering chatbot."""
 
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from chatbot.rag.rag_chain import get_chat_model, normalize_answer
+from chatbot.semantic import (
+    ConversationMessage,
+    SemanticInterpretation,
+    SemanticInterpreter,
+    SemanticLocation,
+)
+from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
 from chatbot.tools.models import ChatSource
 from chatbot.tools.registry import ToolExecution, ToolRegistry
-from chatbot.tools.rag_tool import SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME
 
 
-SYSTEM_PROMPT = """Bạn là trợ lý du lịch tiếng Việt sử dụng các tool được cung cấp.
+SYSTEM_PROMPT = """Bạn là trợ lý hỏi đáp du lịch tiếng Việt.
+
+Backend đã phân tích intent, semantic action và tự thực thi các tool đọc dữ liệu phù hợp.
+Hãy trả lời dựa trên semantic interpretation, lịch sử hội thoại và tool results được cung cấp.
 
 Quy tắc bắt buộc:
-- Knowledge Base đã được backend truy vấn mặc định và đặt trong RAG context trước câu hỏi người dùng; không gọi lại search_travel_knowledge bằng function calling.
-- Nếu RAG context có thông tin liên quan, phải ưu tiên sử dụng thông tin đó để trả lời và không được mâu thuẫn với nó.
-- RAG context không bắt buộc phải đủ 100%. Khi context thiếu hoặc không liên quan, được dùng thêm kiến thức đáng tin cậy của mô hình để giải thích, tư vấn và hoàn thiện câu trả lời; không bịa thông tin khi không chắc chắn.
-- Không nhắc đến các thuật ngữ kỹ thuật như RAG, context, chunk hay tên tool trong câu trả lời cho người dùng.
-- Dùng các Mapbox tool cho địa điểm, địa chỉ, POI, category hoặc tọa độ.
-- Phân biệt rõ hai kiểu tìm Mapbox: chỉ dùng mapbox_forward_search khi người dùng nêu tên riêng, địa chỉ hoặc một POI cụ thể; không đưa nguyên câu hỏi tư vấn, cảm xúc, mùa hay thời điểm vào q.
-- Khi người dùng hỏi mở như "nên đi đâu", mô tả hoạt động, không khí hoặc thời điểm mong muốn, phải chọn địa điểm theo ngữ nghĩa: gọi mapbox_list_categories, đọc danh sách trả về, chọn đúng 3 canonical category_id khác nhau và phù hợp nhất với ý định chính, rồi gọi mapbox_category_search một lần cho từng category đã chọn.
-- Với kết quả của mỗi mapbox_category_search, chỉ chọn và hiển thị POI có rating lớn hơn 4.0 khi Mapbox thực sự cung cấp rating trong feature tương ứng của rawResponse. Không tự tạo rating; nếu Mapbox không cung cấp rating hoặc không có POI nào đạt điều kiện, phải nói rõ là chưa tìm thấy kết quả đủ điều kiện.
-- Chọn category theo ý định chính, không theo từ khóa phụ. Ví dụ "chill, lãng mạn, đi chơi buổi đêm" ưu tiên nhóm giải trí ban đêm, bar, nhạc sống, quán cà phê hoặc điểm ngắm cảnh nếu các category đó có trong kết quả; không chọn cửa hàng, siêu thị, cửa hàng thực phẩm hay nhà hàng nếu người dùng không hỏi mua sắm hoặc ăn uống.
-- Các cụm chỉ mùa như "mùa thu" là bối cảnh để tư vấn và trình bày, không phải lý do chọn category cửa hàng hoa hay cửa hàng thực phẩm.
-- category_id phải đúng một canonicalId có trong kết quả mapbox_list_categories gần nhất. Giữ địa danh người dùng nêu ở bộ lọc near của mapbox_category_search, không biến địa danh đó thành loại hình trải nghiệm.
-- Có thể gọi nhiều tool tuần tự khi câu hỏi cần kết hợp Knowledge Base và dữ liệu địa điểm.
-- Có thể bổ sung kiến thức phổ biến về địa điểm từ mô hình, nhưng địa chỉ cụ thể, tọa độ, giờ mở cửa, số điện thoại, website và dữ liệu có thể thay đổi phải lấy từ tool result; không tự tạo các chi tiết này.
-- Nếu tool báo arguments không hợp lệ, sửa arguments và thử lại khi còn lượt.
-- Nếu không tìm thấy dữ liệu, nói rõ là chưa tìm thấy; không suy đoán.
-- Khi hiển thị các địa điểm tìm được từ Mapbox, hãy trình bày từng địa điểm riêng và luôn kèm địa chỉ đầy đủ nếu có.
-- Với mỗi địa điểm, ưu tiên địa chỉ từ results[].fullAddress. Đọc giờ mở cửa, phone và website từ feature tương ứng trong rawResponse, bao gồm properties và properties.metadata.
-- Giờ mở cửa phải được rút gọn, dễ đọc, ví dụ "07:00–22:00" hoặc "T2–CN: 07:00–22:00", nhưng phải giữ đúng dữ liệu tool cung cấp.
-- Chỉ hiển thị dòng Giờ mở cửa, Điện thoại hoặc Website khi field tương ứng thực sự có giá trị; không tự suy đoán và không ghi nội dung thay thế như "không có thông tin".
-- Trả lời bằng tiếng Việt, tự nhiên, sáng tạo và plain text; không dùng bảng hoặc Markdown phức tạp.
+- Ưu tiên thông tin Knowledge Base khi liên quan; có thể bổ sung kiến thức đáng tin cậy của mô hình khi dữ liệu chưa đủ.
+- Dữ liệu địa điểm có thể thay đổi như địa chỉ, tọa độ, giờ mở cửa, điện thoại và website chỉ được lấy từ Mapbox tool result; không tự tạo.
+- Khi hiển thị địa điểm, trình bày từng nơi riêng và kèm fullAddress nếu có. Chỉ hiển thị giờ mở cửa, điện thoại, website hoặc rating khi rawResponse thực sự có giá trị.
+- Không loại bỏ địa điểm chỉ vì Mapbox không cung cấp rating và không tự tạo rating.
+- Nếu status là needs_clarification, chỉ hỏi ngắn gọn thông tin còn thiếu.
+- Nếu status là unsupported, giải thích rõ giới hạn hiện tại; không giả vờ đã chỉ đường, đọc giao thông thời gian thực, lưu lịch trình hay lưu dữ liệu người dùng.
+- Itinerary chỉ là tư vấn dạng văn bản; không tuyên bố đã lưu hoặc tối ưu tuyến đường.
+- Không nhắc tên tool, RAG, chunk, semantic schema hoặc JSON trong câu trả lời.
+- Nếu tool không tìm thấy dữ liệu, nói rõ chưa tìm thấy; không suy đoán.
+- Trả lời tự nhiên, sáng tạo và plain text tiếng Việt; không dùng bảng hoặc Markdown phức tạp.
 """
 
-RAG_CONTEXT_TEMPLATE = """Đây là kết quả Knowledge Base đã được truy vấn tự động cho câu hỏi hiện tại.
-Hãy dùng nội dung này làm nguồn ưu tiên nếu nó liên quan. Nếu nội dung trống, thiếu hoặc không liên quan, hãy bỏ qua phần không phù hợp và dùng thêm kiến thức đáng tin cậy của mô hình.
-Không nhắc đến Knowledge Base, RAG context hoặc JSON trong câu trả lời.
-
-Kết quả truy vấn:
-{rag_result}
+SEMANTIC_CONTEXT_TEMPLATE = """Phân tích đã được backend xác thực:
+{semantic_json}
 """
 
-RAG_UNAVAILABLE_CONTEXT = """Knowledge Base tạm thời không truy xuất được cho câu hỏi hiện tại. Hãy tiếp tục trả lời bằng kiến thức đáng tin cậy của mô hình và các Mapbox tool nếu phù hợp; không thông báo lỗi kỹ thuật này cho người dùng."""
+TOOL_CONTEXT_TEMPLATE = """Kết quả các tool đọc dữ liệu do backend đã chọn:
+{tool_json}
+"""
 
-FINAL_SYNTHESIS_INSTRUCTION = """Hãy trả lời câu hỏi ban đầu ngay bây giờ. Ưu tiên RAG context và các tool result đã có, đồng thời có thể bổ sung kiến thức đáng tin cậy của mô hình khi các nguồn đó chưa đủ. Không gọi thêm tool, không bịa thông tin, tuân thủ quy tắc hiển thị chi tiết địa điểm trong system prompt và dùng plain text tiếng Việt."""
-
-TOOL_BUDGET_ERROR = "tool_budget_exceeded"
+NO_TOOL_CONTEXT = """Backend không cần gọi tool cho yêu cầu này. Hãy trả lời theo semantic interpretation và lịch sử hội thoại."""
 
 
 class ToolInfrastructureError(RuntimeError):
-    """Raised when every requested tool failed for infrastructure reasons."""
+    """Raised when every planned tool failed for infrastructure reasons."""
 
 
 @dataclass(frozen=True)
 class ChatOrchestratorResult:
     answer: str
     sources: list[ChatSource]
+    interpretation: SemanticInterpretation | None = None
 
 
 class ChatOrchestrator:
-    """Run Gemini tool decisions until it returns text or exhausts the budget."""
+    """Interpret one question, execute a deterministic tool plan, then answer."""
 
     def __init__(
         self,
         chat_model: Any,
         registry: ToolRegistry,
         *,
+        semantic_interpreter: SemanticInterpreter | None = None,
         max_tool_calls: int | None = None,
     ) -> None:
         resolved_max_calls = (
@@ -91,104 +89,110 @@ class ChatOrchestrator:
             raise ValueError("max_tool_calls must be greater than zero")
 
         self._chat_model = chat_model
-        mapbox_tools = [
-            tool
-            for tool in registry.langchain_tools
-            if tool.name != SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME
-        ]
-        self._tool_model = chat_model.bind_tools(mapbox_tools)
         self._registry = registry
+        self._semantic_interpreter = (
+            semantic_interpreter or SemanticInterpreter(chat_model)
+        )
         self._max_tool_calls = resolved_max_calls
 
-    def answer(self, question: str) -> ChatOrchestratorResult:
+    def answer(
+        self,
+        question: str,
+        *,
+        history: Sequence[ConversationMessage] = (),
+        current_location: SemanticLocation | None = None,
+    ) -> ChatOrchestratorResult:
         cleaned_question = question.strip()
         if not cleaned_question:
             raise ValueError("question must not be empty")
 
-        executions: list[ToolExecution] = []
-        sources: list[ChatSource] = []
-        source_keys: set[str] = set()
-        executed_calls = 0
-
-        rag_execution = self._registry.execute(
-            SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
-            {"query": cleaned_question},
+        interpretation = self._semantic_interpreter.interpret(
+            cleaned_question,
+            history=history,
+            current_location=current_location,
         )
-        self._append_unique_sources(
-            rag_execution.sources,
-            sources,
-            source_keys,
+        planned_calls = plan_tools(interpretation)[: self._max_tool_calls]
+        executions = self._execute_plan(planned_calls)
+        self._raise_if_all_tools_had_system_failures(executions)
+
+        sources = self._collect_unique_sources(executions)
+        messages = self._build_answer_messages(
+            cleaned_question,
+            history=history,
+            interpretation=interpretation,
+            planned_calls=planned_calls,
+            executions=executions,
+        )
+        response = self._invoke_ai_message(self._chat_model, messages)
+        self._print_model_response(response)
+        return ChatOrchestratorResult(
+            answer=self._normalized_response_text(response),
+            sources=sources,
+            interpretation=interpretation,
+        )
+
+    def _execute_plan(
+        self,
+        calls: Sequence[PlannedToolCall],
+    ) -> list[ToolExecution]:
+        return [
+            self._registry.execute(call.name, call.arguments)
+            for call in calls
+        ]
+
+    @staticmethod
+    def _build_answer_messages(
+        question: str,
+        *,
+        history: Sequence[ConversationMessage],
+        interpretation: SemanticInterpretation,
+        planned_calls: Sequence[PlannedToolCall],
+        executions: Sequence[ToolExecution],
+    ) -> list[Any]:
+        semantic_content = SEMANTIC_CONTEXT_TEMPLATE.format(
+            semantic_json=interpretation.model_dump_json(exclude_none=True),
+        )
+        tool_content = ChatOrchestrator._tool_context_content(
+            planned_calls,
+            executions,
         )
         messages: list[Any] = [
             SystemMessage(content=SYSTEM_PROMPT),
-            SystemMessage(content=self._rag_context_content(rag_execution)),
-            HumanMessage(content=cleaned_question),
+            SystemMessage(content=semantic_content),
+            SystemMessage(content=tool_content),
         ]
+        for message in history:
+            if message.role == "user":
+                messages.append(HumanMessage(content=message.content))
+            else:
+                messages.append(AIMessage(content=message.content))
+        messages.append(HumanMessage(content=question))
+        return messages
 
-        while True:
-            response = self._invoke_ai_message(self._tool_model, messages)
-            self._print_function_calling_response(response)
-            messages.append(response)
-            tool_calls = response.tool_calls
-
-            if not tool_calls:
-                self._raise_if_all_tools_had_system_failures(executions)
-                return ChatOrchestratorResult(
-                    answer=self._normalized_response_text(response),
-                    sources=sources,
-                )
-
-            budget_exhausted = False
-            for tool_call in tool_calls:
-                call_id = str(
-                    tool_call.get("id")
-                    or f"tool-call-{executed_calls + 1}"
-                )
-                name = str(tool_call.get("name") or "")
-
-                if executed_calls >= self._max_tool_calls:
-                    messages.append(
-                        ToolMessage(
-                            content=self._budget_error_content(),
-                            tool_call_id=call_id,
-                            name=name or None,
-                            status="error",
-                        )
-                    )
-                    budget_exhausted = True
-                    continue
-
-                executed_calls += 1
-                execution = self._registry.execute(name, tool_call.get("args", {}))
-                executions.append(execution)
-                self._append_unique_sources(
-                    execution.sources,
-                    sources,
-                    source_keys,
-                )
-                messages.append(
-                    ToolMessage(
-                        content=execution.content,
-                        tool_call_id=call_id,
-                        name=name or None,
-                        status="success" if execution.success else "error",
-                    )
-                )
-
-            if executed_calls >= self._max_tool_calls or budget_exhausted:
-                self._raise_if_all_tools_had_system_failures(executions)
-                final_messages = [
-                    *messages,
-                    HumanMessage(content=FINAL_SYNTHESIS_INSTRUCTION),
-                ]
-                final_response = self._invoke_ai_message(
-                    self._chat_model,
-                    final_messages,
-                )
-                return ChatOrchestratorResult(
-                    answer=self._normalized_response_text(final_response),
-                    sources=sources,
-                )
+    @staticmethod
+    def _tool_context_content(
+        calls: Sequence[PlannedToolCall],
+        executions: Sequence[ToolExecution],
+    ) -> str:
+        if not calls:
+            return NO_TOOL_CONTEXT
+        payload = [
+            {
+                "request": {
+                    "name": call.name,
+                    "arguments": call.arguments,
+                },
+                "result": json.loads(execution.content),
+            }
+            for call, execution in zip(calls, executions, strict=True)
+        ]
+        return TOOL_CONTEXT_TEMPLATE.format(
+            tool_json=json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
 
     @staticmethod
     def _invoke_ai_message(model: Any, messages: list[Any]) -> AIMessage:
@@ -198,26 +202,20 @@ class ChatOrchestrator:
         return response
 
     @staticmethod
-    def _print_function_calling_response(response: AIMessage) -> None:
-        """Print only Gemini's bound-model response, never the request messages."""
+    def _print_model_response(response: AIMessage) -> None:
+        """Print only Gemini's response, never the request or tool payloads."""
         response_json = json.dumps(
             response.model_dump(mode="json"),
             ensure_ascii=False,
             indent=2,
         )
-        output = f"Gemini function-calling response:\n{response_json}\n"
+        output = f"Gemini response:\n{response_json}\n"
         stdout_buffer = getattr(sys.stdout, "buffer", None)
         if stdout_buffer is not None:
             stdout_buffer.write(output.encode("utf-8"))
             stdout_buffer.flush()
             return
         print(output, end="", flush=True)
-
-    @staticmethod
-    def _rag_context_content(execution: ToolExecution) -> str:
-        if not execution.success:
-            return RAG_UNAVAILABLE_CONTEXT
-        return RAG_CONTEXT_TEMPLATE.format(rag_result=execution.content)
 
     @staticmethod
     def _normalized_response_text(response: AIMessage) -> str:
@@ -230,21 +228,23 @@ class ChatOrchestrator:
         return normalized
 
     @staticmethod
-    def _append_unique_sources(
-        new_sources: tuple[ChatSource, ...],
-        sources: list[ChatSource],
-        source_keys: set[str],
-    ) -> None:
-        for source in new_sources:
-            source_key = source.model_dump_json()
-            if source_key in source_keys:
-                continue
-            source_keys.add(source_key)
-            sources.append(source)
+    def _collect_unique_sources(
+        executions: Sequence[ToolExecution],
+    ) -> list[ChatSource]:
+        sources: list[ChatSource] = []
+        source_keys: set[str] = set()
+        for execution in executions:
+            for source in execution.sources:
+                source_key = source.model_dump_json()
+                if source_key in source_keys:
+                    continue
+                source_keys.add(source_key)
+                sources.append(source)
+        return sources
 
     @staticmethod
     def _raise_if_all_tools_had_system_failures(
-        executions: list[ToolExecution],
+        executions: Sequence[ToolExecution],
     ) -> None:
         if (
             executions
@@ -252,53 +252,55 @@ class ChatOrchestrator:
             and all(execution.system_failure for execution in executions)
         ):
             raise ToolInfrastructureError(
-                "All requested tools failed because of infrastructure errors."
+                "All planned tools failed because of infrastructure errors."
             )
-
-    @staticmethod
-    def _budget_error_content() -> str:
-        return json.dumps(
-            {
-                "success": False,
-                "data": None,
-                "errorCode": TOOL_BUDGET_ERROR,
-                "errorMessage": "Đã đạt giới hạn số lần gọi tool.",
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
 
 
 def orchestrate_chat(
     question: str,
     *,
+    history: Sequence[ConversationMessage] = (),
+    current_location: SemanticLocation | None = None,
     chat_model: Any | None = None,
     registry: ToolRegistry | None = None,
+    semantic_interpreter: SemanticInterpreter | None = None,
     max_tool_calls: int | None = None,
 ) -> ChatOrchestratorResult:
-    """Run one stateless chatbot request and close owned HTTP resources."""
+    """Run one stateless request and close owned HTTP resources."""
     active_model = chat_model or get_chat_model()
     if registry is not None:
         return ChatOrchestrator(
             active_model,
             registry,
+            semantic_interpreter=semantic_interpreter,
             max_tool_calls=max_tool_calls,
-        ).answer(question)
+        ).answer(
+            question,
+            history=history,
+            current_location=current_location,
+        )
 
     with MapboxToolClient() as mapbox_client:
         active_registry = ToolRegistry(mapbox_client)
         return ChatOrchestrator(
             active_model,
             active_registry,
+            semantic_interpreter=semantic_interpreter,
             max_tool_calls=max_tool_calls,
-        ).answer(question)
+        ).answer(
+            question,
+            history=history,
+            current_location=current_location,
+        )
 
 
 __all__ = [
     "ChatOrchestrator",
     "ChatOrchestratorResult",
-    "RAG_CONTEXT_TEMPLATE",
+    "NO_TOOL_CONTEXT",
+    "SEMANTIC_CONTEXT_TEMPLATE",
     "SYSTEM_PROMPT",
+    "TOOL_CONTEXT_TEMPLATE",
     "ToolInfrastructureError",
     "orchestrate_chat",
 ]

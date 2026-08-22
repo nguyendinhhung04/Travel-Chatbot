@@ -9,7 +9,6 @@ namespace Backend.Controllers;
 [Produces("application/json")]
 public sealed class ChatbotToolsController(
     MapboxForwardSearchTool forwardSearchTool,
-    MapboxListCategoriesTool listCategoriesTool,
     MapboxCategorySearchTool categorySearchTool,
     MapboxReverseLookupTool reverseLookupTool) : ControllerBase
 {
@@ -24,21 +23,6 @@ public sealed class ChatbotToolsController(
     {
         var result = await forwardSearchTool.ExecuteAsync(
             request.ToMapboxRequest(),
-            cancellationToken);
-        return ToActionResult(result);
-    }
-
-    [HttpPost("mapbox-list-categories")]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status502BadGateway)]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status504GatewayTimeout)]
-    public async Task<IActionResult> ListCategories(
-        [FromBody] MapboxListCategoriesToolHttpRequest request,
-        CancellationToken cancellationToken)
-    {
-        var result = await listCategoriesTool.ExecuteAsync(
-            request.Language,
             cancellationToken);
         return ToActionResult(result);
     }

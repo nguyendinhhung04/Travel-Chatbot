@@ -43,13 +43,6 @@ class _MapboxSearchFilters(ToolModel):
     poi_category_exclusions: NonEmptyString | None = None
     show_closed_pois: bool | None = None
     exclude_fields: NonEmptyString | None = None
-    sar_type: Literal["isochrone"] | None = None
-    route: NonEmptyString | None = None
-    route_geometry: Literal["polyline", "polyline6"] | None = None
-    time_deviation: float | None = Field(default=None, ge=0)
-    eta_type: Literal["navigation"] | None = None
-    navigation_profile: Literal["driving", "walking", "cycling"] | None = None
-    origin: NonEmptyString | None = None
 
 
 class MapboxForwardSearchInput(_MapboxSearchFilters):
@@ -68,7 +61,7 @@ class MapboxForwardSearchInput(_MapboxSearchFilters):
         default=None,
         description=(
             "Bộ lọc category chỉ dùng kèm một q là tên/địa chỉ cụ thể; với nhu cầu "
-            "gợi ý theo trải nghiệm, dùng mapbox_list_categories rồi "
+            "gợi ý theo trải nghiệm, backend sẽ dùng category resolver và "
             "mapbox_category_search."
         ),
     )
@@ -79,20 +72,13 @@ class MapboxForwardSearchInput(_MapboxSearchFilters):
     auto_complete: bool | None = None
 
 
-class MapboxListCategoriesInput(ToolModel):
-    """Arguments accepted by the Mapbox category-list typed endpoint."""
-
-    language: NonEmptyString | None = None
-
-
 class MapboxCategorySearchInput(_MapboxSearchFilters):
     """Arguments accepted by the Mapbox category-search typed endpoint."""
 
     category_id: NonEmptyString = Field(
         description=(
-            "Canonical category ID có thật trong kết quả mapbox_list_categories gần "
-            "nhất và phù hợp với ý định chính của người dùng. Không suy ra category từ "
-            "từ khóa phụ như mùa, cảm xúc hoặc tên địa danh."
+            "Canonical category ID thuộc whitelist do backend category resolver chọn "
+            "từ semantic domain. Không dùng địa danh làm category_id."
         )
     )
 
@@ -134,17 +120,6 @@ class MapboxPlaceItem(ToolModel):
 class MapboxPlaceToolData(ToolModel):
     attribution: NonEmptyString
     results: list[MapboxPlaceItem]
-    raw_response: dict[str, Any] = Field(alias="rawResponse")
-
-
-class MapboxCategoryItem(ToolModel):
-    canonical_id: NonEmptyString = Field(alias="canonicalId")
-    name: NonEmptyString
-
-
-class MapboxCategoryToolData(ToolModel):
-    attribution: NonEmptyString
-    categories: list[MapboxCategoryItem]
     raw_response: dict[str, Any] = Field(alias="rawResponse")
 
 
@@ -205,11 +180,8 @@ class RagToolData(ToolModel):
 __all__ = [
     "ChatSource",
     "KnowledgeBaseSource",
-    "MapboxCategoryItem",
     "MapboxCategorySearchInput",
-    "MapboxCategoryToolData",
     "MapboxForwardSearchInput",
-    "MapboxListCategoriesInput",
     "MapboxPlaceItem",
     "MapboxPlaceToolData",
     "MapboxReverseLookupInput",

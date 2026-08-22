@@ -115,4 +115,3 @@ class TravelKnowledgeToolTests(SimpleTestCase):
     def assert_single(self, values):
         self.assertEqual(len(values), 1)
         return values[0]
-

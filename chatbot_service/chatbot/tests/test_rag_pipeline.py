@@ -268,7 +268,23 @@ class ChatAPITests(SimpleTestCase):
         self,
         orchestrate_mock,
     ):
-        for payload in ({}, {"message": "   "}, {"message": 123}):
+        invalid_payloads = (
+            {},
+            {"message": "   "},
+            {"message": 123},
+            {
+                "message": "Tìm gần đây",
+                "current_location": {"longitude": 108.2},
+            },
+            {
+                "message": "Câu hỏi",
+                "history": [
+                    {"role": "user", "content": f"Tin nhắn {index}"}
+                    for index in range(13)
+                ],
+            },
+        )
+        for payload in invalid_payloads:
             with self.subTest(payload=payload):
                 response = self.client.post(
                     "/api/chat/",
@@ -355,7 +371,46 @@ class ChatAPITests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"error": CHAT_SERVICE_ERROR})
-        orchestrate_mock.assert_called_once_with("Huế có gì?")
+        orchestrate_mock.assert_called_once_with(
+            "Huế có gì?",
+            history=(),
+            current_location=None,
+        )
+
+    @patch("chatbot.views.orchestrate_chat")
+    def test_optional_history_and_location_are_forwarded_to_orchestration(
+        self,
+        orchestrate_mock,
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
+            answer="Có quán cafe phù hợp.",
+            sources=[],
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={
+                "message": "Tìm quán gần đây",
+                "history": [
+                    {"role": "user", "content": "Tôi đang ở cầu Rồng"}
+                ],
+                "current_location": {
+                    "longitude": 108.227,
+                    "latitude": 16.061,
+                    "radius_km": 1,
+                },
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        call = orchestrate_mock.call_args
+        self.assertEqual(call.args, ("Tìm quán gần đây",))
+        self.assertEqual(call.kwargs["history"][0].role, "user")
+        self.assertEqual(
+            call.kwargs["current_location"].longitude,
+            108.227,
+        )
 
 
 class AskTravelCommandTests(SimpleTestCase):
