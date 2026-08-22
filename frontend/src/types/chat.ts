@@ -1,7 +1,17 @@
-export type ChatSource = {
+export type KnowledgeBaseSource = {
+  type: "knowledge_base";
   title: string;
   source: string;
 };
+
+export type MapboxSource = {
+  type: "mapbox";
+  title: string;
+  source: string;
+  attribution: string;
+};
+
+export type ChatSource = KnowledgeBaseSource | MapboxSource;
 
 export type ChatSuccessResponse = {
   answer: string;

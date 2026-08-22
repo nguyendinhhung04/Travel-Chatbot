@@ -20,11 +20,19 @@ const SUGGESTIONS = [
 const DEFAULT_ERROR = "Không thể nhận câu trả lời. Vui lòng thử lại.";
 
 function isSource(value: unknown): value is ChatSource {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as ChatSource).title === "string" &&
-    typeof (value as ChatSource).source === "string"
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as ChatSource).title !== "string" ||
+    typeof (value as ChatSource).source !== "string"
+  ) {
+    return false;
+  }
+
+  const source = value as ChatSource;
+  return source.type === "knowledge_base" || (
+    source.type === "mapbox" &&
+    typeof source.attribution === "string"
   );
 }
 
