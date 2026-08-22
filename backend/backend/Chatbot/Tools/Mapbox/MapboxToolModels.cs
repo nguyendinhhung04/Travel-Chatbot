@@ -19,4 +19,6 @@ public sealed record MapboxPlaceItem(
     [property: JsonPropertyName("poiCategoryIds")] IReadOnlyList<string> PoiCategoryIds,
     [property: JsonPropertyName("operationalStatus")] string? OperationalStatus,
     [property: JsonPropertyName("distanceMeters")] double? DistanceMeters,
-    [property: JsonPropertyName("etaMinutes")] double? EtaMinutes);
+    [property: JsonPropertyName("etaMinutes")] double? EtaMinutes,
+    [property: JsonPropertyName("rating")] double? Rating,
+    [property: JsonPropertyName("popularity")] double? Popularity);

@@ -26,6 +26,22 @@ internal static class MapboxToolResponseParser
         return new MapboxPlaceToolData(response.Attribution, results, rawResponse);
     }
 
+    public static MapboxPlaceToolData ParseCategoryPlaces(
+        string json,
+        double minimumRating,
+        int resultLimit)
+    {
+        var data = ParsePlaces(json);
+        var results = data.Results
+            .Where(place => place.Rating is null || place.Rating >= minimumRating)
+            .OrderByDescending(place => place.Popularity.HasValue)
+            .ThenByDescending(place => place.Popularity)
+            .Take(resultLimit)
+            .ToArray();
+
+        return data with { Results = results };
+    }
+
     private static MapboxPlaceItem ParsePlace(Feature feature)
     {
         var properties = feature.Properties ?? throw InvalidResponse();
@@ -68,7 +84,9 @@ internal static class MapboxToolResponseParser
             properties.PoiCategoryIds ?? [],
             properties.OperationalStatus,
             properties.Distance,
-            properties.Eta);
+            properties.Eta,
+            properties.Metadata?.Rating,
+            properties.Metadata?.Popularity);
     }
 
     private static string? FirstNotEmpty(params string?[] values) =>
@@ -141,6 +159,18 @@ internal static class MapboxToolResponseParser
 
         [JsonPropertyName("eta")]
         public double? Eta { get; init; }
+
+        [JsonPropertyName("metadata")]
+        public FeatureMetadata? Metadata { get; init; }
+    }
+
+    private sealed class FeatureMetadata
+    {
+        [JsonPropertyName("rating")]
+        public double? Rating { get; init; }
+
+        [JsonPropertyName("popularity")]
+        public double? Popularity { get; init; }
     }
 
     private sealed class Coordinates

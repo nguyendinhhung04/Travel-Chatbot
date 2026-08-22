@@ -47,6 +47,7 @@ class MapboxToolClientTests(SimpleTestCase):
                 MapboxCategorySearchInput(
                     category_id="restaurant",
                     proximity="108.2,16.1",
+                    minimum_rating=4,
                 )
             )
             reverse = client.reverse_lookup(
@@ -70,7 +71,11 @@ class MapboxToolClientTests(SimpleTestCase):
                 ),
                 (
                     "/api/chatbot/tools/mapbox-category-search",
-                    {"proximity": "108.2,16.1", "category_id": "restaurant"},
+                    {
+                        "proximity": "108.2,16.1",
+                        "category_id": "restaurant",
+                        "minimum_rating": 4.0,
+                    },
                 ),
                 (
                     "/api/chatbot/tools/mapbox-reverse-lookup",

@@ -48,6 +48,14 @@ class TravelDomain(str, Enum):
     ESSENTIAL = "ESSENTIAL"
 
 
+class SearchTargetType(str, Enum):
+    POI = "poi"
+    COUNTRY = "country"
+    CITY = "city"
+    ADDRESS = "address"
+    PLACE = "place"
+
+
 class InterpretationStatus(str, Enum):
     SUPPORTED = "supported"
     PARTIALLY_SUPPORTED = "partially_supported"
@@ -89,6 +97,7 @@ class SemanticEntities(SemanticModel):
     destinations: list[NonEmptyString] = Field(default_factory=list, max_length=10)
     places: list[NonEmptyString] = Field(default_factory=list, max_length=10)
     place_types: list[NonEmptyString] = Field(default_factory=list, max_length=10)
+    search_target: SearchTargetType | None = None
     referenced_result_indexes: list[int] = Field(default_factory=list, max_length=10)
 
 
@@ -116,6 +125,7 @@ class SemanticConstraints(SemanticModel):
     budget_currency: NonEmptyString | None = None
     open_now: bool | None = None
     minimum_rating: float | None = Field(default=None, ge=0, le=5)
+    rank_strategy: Literal["distance", "relevance"] | None = None
     price_preference: NonEmptyString | None = None
     mobility_needs: list[NonEmptyString] = Field(default_factory=list, max_length=10)
     cuisines: list[NonEmptyString] = Field(default_factory=list, max_length=10)
@@ -177,6 +187,12 @@ Quy tắc:
   experience_tags sang Mapbox category.
 - Phân biệt POI/tên riêng cụ thể với nhu cầu tìm kiếm mở. POI cụ thể dùng action
   find_named_place; nhu cầu mở dùng discover_places.
+- Với find_named_place, điền entities.search_target: poi cho nhà hàng/khách sạn/điểm tham
+  quan/doanh nghiệp cụ thể; address cho địa chỉ; city cho thành phố; country cho quốc gia;
+  place cho địa danh hành chính khác.
+- Chỉ điền constraints.minimum_rating khi người dùng nêu mức rating cụ thể. Nếu người dùng
+  nói không giới hạn rating, dùng 0. Chỉ điền constraints.rank_strategy=distance khi họ yêu
+  cầu gần nhất; dùng relevance khi họ nói rõ ưu tiên phù hợp với truy vấn; nếu không thì để null.
 - Itinerary chỉ là tư vấn bằng văn bản, không lưu và không tính route.
 - Yêu cầu chỉ đường trực tiếp, giao thông thời gian thực, lưu yêu thích hoặc lưu dữ
   liệu người dùng phải có status unsupported và action report_unsupported.
@@ -268,6 +284,7 @@ __all__ = [
     "SemanticInterpreter",
     "SemanticLocation",
     "SemanticTimeContext",
+    "SearchTargetType",
     "TravelDomain",
     "interpret_question",
 ]

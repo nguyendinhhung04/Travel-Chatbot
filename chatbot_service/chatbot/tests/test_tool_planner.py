@@ -11,6 +11,7 @@ from chatbot.semantic import (
     SemanticEntities,
     SemanticInterpretation,
     SemanticLocation,
+    SearchTargetType,
     TravelDomain,
 )
 from chatbot.tool_planner import plan_tools
@@ -44,7 +45,7 @@ class ToolPlannerTests(SimpleTestCase):
                 places=["Bà Nà Hills"],
             ),
             location=SemanticLocation(near="Đà Nẵng"),
-            constraints=SemanticConstraints(open_now=True, minimum_rating=4),
+            constraints=SemanticConstraints(open_now=True),
         )
 
         calls = plan_tools(interpretation)
@@ -60,10 +61,58 @@ class ToolPlannerTests(SimpleTestCase):
                 "language": "vi",
                 "limit": 5,
                 "near": "Đà Nẵng",
+                "types": "poi",
+                "rank_strategy": "relevance",
                 "open_now": True,
                 "minimum_rating": 4.0,
             },
         )
+
+    def test_named_city_uses_forward_search_without_poi_rating(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_SEARCH,
+            actions=[SemanticActionType.FIND_NAMED_PLACE],
+            entities=SemanticEntities(
+                destinations=["Đà Nẵng"],
+                search_target=SearchTargetType.CITY,
+            ),
+            constraints=SemanticConstraints(
+                open_now=True,
+                minimum_rating=4.5,
+            ),
+        )
+
+        call = plan_tools(interpretation)[0]
+
+        self.assertEqual(call.name, "mapbox_forward_search")
+        self.assertEqual(
+            call.arguments,
+            {
+                "q": "Đà Nẵng",
+                "language": "vi",
+                "limit": 5,
+                "near": "Đà Nẵng",
+                "types": "city",
+                "rank_strategy": "relevance",
+            },
+        )
+
+    def test_named_poi_uses_explicit_distance_and_rating(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_SEARCH,
+            actions=[SemanticActionType.FIND_NAMED_PLACE],
+            entities=SemanticEntities(places=["quán cafe"]),
+            constraints=SemanticConstraints(
+                minimum_rating=3.5,
+                rank_strategy="distance",
+            ),
+        )
+
+        call = plan_tools(interpretation)[0]
+
+        self.assertEqual(call.arguments["types"], "poi")
+        self.assertEqual(call.arguments["minimum_rating"], 3.5)
+        self.assertEqual(call.arguments["rank_strategy"], "distance")
 
     def test_discovery_resolves_categories_without_category_list_call(self):
         interpretation = build_interpretation(
@@ -92,6 +141,11 @@ class ToolPlannerTests(SimpleTestCase):
         )
         self.assertTrue(
             all(call.arguments["near"] == "Đà Nẵng" for call in calls)
+        )
+        self.assertTrue(all(call.arguments["limit"] == 10 for call in calls))
+        self.assertTrue(all(call.arguments["types"] == "poi" for call in calls))
+        self.assertTrue(
+            all(call.arguments["minimum_rating"] == 4.0 for call in calls)
         )
         self.assertFalse(
             any(call.name == "mapbox_list_categories" for call in calls)
