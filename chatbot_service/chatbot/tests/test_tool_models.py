@@ -7,7 +7,6 @@ from chatbot.tools.models import (
     ChatSource,
     KnowledgeBaseSource,
     MapboxCategorySearchInput,
-    MapboxCategoryToolData,
     MapboxForwardSearchInput,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
@@ -54,7 +53,6 @@ class ToolInputModelTests(SimpleTestCase):
         category = MapboxCategorySearchInput(
             category_id=" restaurant ",
             limit=25,
-            navigation_profile="walking",
         )
         reverse = MapboxReverseLookupInput(longitude=108.2, latitude=16.1)
 
@@ -130,31 +128,7 @@ class ToolResponseModelTests(SimpleTestCase):
         )
         self.assertEqual(result.data.raw_response["response_id"], "response-1")
 
-    def test_category_result_and_failure_envelope_parse_camel_case(self):
-        success = ToolResult[MapboxCategoryToolData].model_validate(
-            {
-                "success": True,
-                "data": {
-                    "attribution": "Mapbox",
-                    "categories": [
-                        {"canonicalId": "restaurant", "name": "Restaurant"}
-                    ],
-                    "rawResponse": {
-                        "listItems": [
-                            {
-                                "canonical_id": "restaurant",
-                                "name": "Restaurant",
-                                "icon": "restaurant",
-                                "version": "1",
-                                "uuid": "category-1",
-                            }
-                        ],
-                        "attribution": "Mapbox",
-                        "version": "1",
-                    },
-                },
-            }
-        )
+    def test_failure_envelope_parses_camel_case(self):
         failure = ToolResult[MapboxPlaceToolData].model_validate(
             {
                 "success": False,
@@ -164,11 +138,6 @@ class ToolResponseModelTests(SimpleTestCase):
             }
         )
 
-        self.assertEqual(success.data.categories[0].canonical_id, "restaurant")
-        self.assertEqual(
-            success.data.raw_response["listItems"][0]["icon"],
-            "restaurant",
-        )
         self.assertEqual(failure.error_code, "mapbox_timeout")
         self.assertIsNone(failure.data)
 

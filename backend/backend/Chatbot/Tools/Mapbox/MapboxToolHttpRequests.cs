@@ -56,29 +56,8 @@ public sealed record MapboxForwardSearchToolHttpRequest
     [JsonPropertyName("rank_strategy")]
     public string? RankStrategy { get; init; }
 
-    [JsonPropertyName("sar_type")]
-    public string? SarType { get; init; }
-
-    [JsonPropertyName("route")]
-    public string? Route { get; init; }
-
-    [JsonPropertyName("route_geometry")]
-    public string? RouteGeometry { get; init; }
-
-    [JsonPropertyName("time_deviation")]
-    public double? TimeDeviation { get; init; }
-
     [JsonPropertyName("auto_complete")]
     public bool? AutoComplete { get; init; }
-
-    [JsonPropertyName("eta_type")]
-    public string? EtaType { get; init; }
-
-    [JsonPropertyName("navigation_profile")]
-    public string? NavigationProfile { get; init; }
-
-    [JsonPropertyName("origin")]
-    public string? Origin { get; init; }
 
     public MapboxForwardSearchRequest ToMapboxRequest() => new()
     {
@@ -99,21 +78,8 @@ public sealed record MapboxForwardSearchToolHttpRequest
         PriceLevels = PriceLevels,
         ExcludeFields = ExcludeFields,
         RankStrategy = RankStrategy,
-        SarType = SarType,
-        Route = Route,
-        RouteGeometry = RouteGeometry,
-        TimeDeviation = TimeDeviation,
-        AutoComplete = AutoComplete,
-        EtaType = EtaType,
-        NavigationProfile = NavigationProfile,
-        Origin = Origin
+        AutoComplete = AutoComplete
     };
-}
-
-public sealed record MapboxListCategoriesToolHttpRequest
-{
-    [JsonPropertyName("language")]
-    public string? Language { get; init; }
 }
 
 public sealed record MapboxCategorySearchToolHttpRequest
@@ -154,27 +120,6 @@ public sealed record MapboxCategorySearchToolHttpRequest
     [JsonPropertyName("exclude_fields")]
     public string? ExcludeFields { get; init; }
 
-    [JsonPropertyName("sar_type")]
-    public string? SarType { get; init; }
-
-    [JsonPropertyName("route")]
-    public string? Route { get; init; }
-
-    [JsonPropertyName("route_geometry")]
-    public string? RouteGeometry { get; init; }
-
-    [JsonPropertyName("time_deviation")]
-    public double? TimeDeviation { get; init; }
-
-    [JsonPropertyName("eta_type")]
-    public string? EtaType { get; init; }
-
-    [JsonPropertyName("navigation_profile")]
-    public string? NavigationProfile { get; init; }
-
-    [JsonPropertyName("origin")]
-    public string? Origin { get; init; }
-
     public MapboxCategorySearchRequest ToMapboxRequest() => new()
     {
         Language = Language,
@@ -187,14 +132,7 @@ public sealed record MapboxCategorySearchToolHttpRequest
         Types = Types,
         PoiCategoryExclusions = PoiCategoryExclusions,
         ShowClosedPois = ShowClosedPois,
-        ExcludeFields = ExcludeFields,
-        SarType = SarType,
-        Route = Route,
-        RouteGeometry = RouteGeometry,
-        TimeDeviation = TimeDeviation,
-        EtaType = EtaType,
-        NavigationProfile = NavigationProfile,
-        Origin = Origin
+        ExcludeFields = ExcludeFields
     };
 }
 

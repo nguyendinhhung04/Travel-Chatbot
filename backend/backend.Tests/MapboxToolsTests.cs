@@ -90,44 +90,6 @@ public sealed class MapboxToolsTests
     }
 
     [Fact]
-    public async Task ListCategoriesTool_MapsChatbotFieldsAndPreservesRawResponse()
-    {
-        var client = new StubMapboxClient
-        {
-            Response = JsonResponse($$"""
-                {
-                  "listItems": [
-                    {
-                      "canonical_id": "restaurant",
-                      "icon": "restaurant",
-                      "name": "Restaurant",
-                      "version": "internal",
-                      "uuid": "unstable"
-                    }
-                  ],
-                  "attribution": "{{Attribution}}",
-                  "version": "internal"
-                }
-                """)
-        };
-
-        var result = await new MapboxListCategoriesTool(client)
-            .ExecuteAsync(" en ", CancellationToken.None);
-
-        Assert.True(result.Success);
-        Assert.Equal(" en ", client.Language);
-        var data = Assert.IsType<MapboxCategoryToolData>(result.Data);
-        Assert.Equal(Attribution, data.Attribution);
-        var category = Assert.Single(data.Categories);
-        Assert.Equal("restaurant", category.CanonicalId);
-        Assert.Equal("Restaurant", category.Name);
-        Assert.Equal(
-            "restaurant",
-            data.RawResponse.GetProperty("listItems")[0].GetProperty("icon").GetString());
-        Assert.Equal("internal", data.RawResponse.GetProperty("version").GetString());
-    }
-
-    [Fact]
     public async Task CategorySearchTool_ForwardsCategoryAndCompleteRequest()
     {
         var client = new StubMapboxClient { Response = JsonResponse(MinimalPlaceResponse) };

@@ -6,7 +6,7 @@ Nếu tôi là **người dùng thật của app du lịch có chatbot**, tôi s
 
 Tôi sẽ bắt đầu bằng những câu khá chung:
 
-- “Cuối tuần này tôi nên đi đâu gần Hà Nội?” --> Lấy category --> 
+- “Cuối tuần này tôi nên đi đâu gần Hà Nội?” 
 - “Tôi có 3 ngày 2 đêm thì nên đi Đà Nẵng hay Nha Trang?” 
 - “Tháng 9 đi Đà Lạt có ổn không?”  --> RAG
 - “Tôi muốn đi nơi nào mát, ít đông và chi phí khoảng 3 triệu.” --> RAG

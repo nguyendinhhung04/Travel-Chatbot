@@ -20,12 +20,3 @@ public sealed record MapboxPlaceItem(
     [property: JsonPropertyName("operationalStatus")] string? OperationalStatus,
     [property: JsonPropertyName("distanceMeters")] double? DistanceMeters,
     [property: JsonPropertyName("etaMinutes")] double? EtaMinutes);
-
-public sealed record MapboxCategoryToolData(
-    [property: JsonPropertyName("attribution")] string Attribution,
-    [property: JsonPropertyName("categories")] IReadOnlyList<MapboxCategoryItem> Categories,
-    [property: JsonPropertyName("rawResponse")] JsonElement RawResponse);
-
-public sealed record MapboxCategoryItem(
-    [property: JsonPropertyName("canonicalId")] string CanonicalId,
-    [property: JsonPropertyName("name")] string Name);

@@ -11,7 +11,7 @@ public sealed class MapboxCategorySearchTool(IMapboxClient mapboxClient)
 
     [Description("Tìm POI theo category ID và toàn bộ bộ lọc Category Search được backend hỗ trợ.")]
     public Task<ToolResult<MapboxPlaceToolData>> ExecuteAsync(
-        [Description("Canonical category ID lấy từ tool mapbox_list_categories.")]
+        [Description("Canonical category ID do backend category resolver chọn từ whitelist du lịch.")]
         string categoryId,
         [Description("Các tham số lọc Mapbox Category Search.")]
         MapboxCategorySearchRequest request,

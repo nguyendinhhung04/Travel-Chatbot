@@ -108,6 +108,43 @@ Invoke-RestMethod `
 Response gom `answer` va danh sach `sources` (khong lap tai lieu). Cau hoi khong hop le tra `400`; loi Gemini,
 Embedding hoac Chroma tra `503` voi thong bao an toan.
 
+### Intent, Semantic va Tool flow
+
+Moi request duoc xu ly theo thu tu:
+
+1. Gemini tra ve `SemanticInterpretation` da duoc Pydantic validate.
+2. Backend `ToolPlanner` chon tool tu intent va semantic action.
+3. `CategoryResolver` anh xa travel domain sang canonical Mapbox category trong whitelist.
+4. Backend thuc thi tool doc du lieu va dua ket qua cho Gemini tong hop cau tra loi.
+
+Bo runtime tool gom:
+
+- `search_travel_knowledge`: kien thuc va tu van du lich tu Knowledge Base.
+- `mapbox_forward_search`: ten rieng, dia chi hoac POI cu the.
+- `mapbox_category_search`: kham pha POI theo category do backend resolve.
+- `mapbox_reverse_lookup`: tra dia diem tu toa do.
+
+`mapbox_list_categories` khong nam trong runtime flow. Danh sach category da duoc loc
+trong `docs/travel_categories_mapbox.md`, vi vay chatbot khong can tai lai toan bo
+category trong moi cau hoi. Contract hien tai cung khong co route, ETA, luu itinerary,
+MongoDB hay user.
+
+Request co the gui them context khong luu tru:
+
+```json
+{
+  "message": "Tim quan cafe gan day",
+  "history": [
+    {"role": "user", "content": "Toi dang o cau Rong"}
+  ],
+  "current_location": {
+    "longitude": 108.227,
+    "latitude": 16.061,
+    "radius_km": 1
+  }
+}
+```
+
 ## Chay Server
 
 ```powershell

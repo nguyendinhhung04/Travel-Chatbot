@@ -1,14 +1,13 @@
 """HTTP views and response helpers for the travel chatbot API."""
 
 import logging
-from collections.abc import Iterable
 
-from langchain_core.documents import Document
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .orchestrator import orchestrate_chat
+from .semantic import ConversationMessage, SemanticLocation
 from .serializers import ChatRequestSerializer
 
 
@@ -17,36 +16,30 @@ logger = logging.getLogger(__name__)
 CHAT_SERVICE_ERROR = "Chatbot hiện không thể trả lời. Vui lòng thử lại sau."
 
 
-def build_sources(documents: Iterable[Document]) -> list[dict[str, str]]:
-    """Create an ordered, de-duplicated source list for an API response."""
-    sources: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-
-    for document in documents:
-        metadata = document.metadata
-        title = str(metadata.get("title") or "Không rõ")
-        source = str(metadata.get("source") or "unknown")
-        source_key = (title, source)
-
-        if source_key in seen:
-            continue
-
-        seen.add(source_key)
-        sources.append({"title": title, "source": source})
-
-    return sources
-
-
 class ChatAPIView(APIView):
-    """Answer one travel question with Gemini-directed tools."""
+    """Answer one travel question with backend-selected read-only tools."""
 
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         message = serializer.validated_data["message"]
+        history = tuple(
+            ConversationMessage.model_validate(item)
+            for item in serializer.validated_data.get("history", [])
+        )
+        location_data = serializer.validated_data.get("current_location")
+        current_location = (
+            SemanticLocation.model_validate(location_data)
+            if location_data is not None
+            else None
+        )
         try:
-            result = orchestrate_chat(message)
+            result = orchestrate_chat(
+                message,
+                history=history,
+                current_location=current_location,
+            )
         except Exception:
             logger.exception("Travel chatbot request failed")
             return Response(
@@ -65,4 +58,4 @@ class ChatAPIView(APIView):
         )
 
 
-__all__ = ["CHAT_SERVICE_ERROR", "ChatAPIView", "build_sources"]
+__all__ = ["CHAT_SERVICE_ERROR", "ChatAPIView"]

@@ -11,9 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .models import (
     MapboxCategorySearchInput,
-    MapboxCategoryToolData,
     MapboxForwardSearchInput,
-    MapboxListCategoriesInput,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
     ToolResult,
@@ -27,7 +25,6 @@ TOOL_UNAVAILABLE_ERROR = "tool_unavailable"
 TOOL_INVALID_RESPONSE_ERROR = "tool_invalid_response"
 
 _PLACE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceToolData])
-_CATEGORY_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxCategoryToolData])
 _ResultData = TypeVar("_ResultData")
 
 
@@ -60,16 +57,6 @@ class MapboxToolClient:
             "/api/chatbot/tools/mapbox-forward-search",
             request.model_dump(exclude_none=True),
             _PLACE_RESULT_ADAPTER,
-        )
-
-    def list_categories(
-        self,
-        request: MapboxListCategoriesInput,
-    ) -> ToolResult[MapboxCategoryToolData]:
-        return self._post(
-            "/api/chatbot/tools/mapbox-list-categories",
-            request.model_dump(exclude_none=True),
-            _CATEGORY_RESULT_ADAPTER,
         )
 
     def category_search(

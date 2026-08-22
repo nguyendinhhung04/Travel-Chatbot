@@ -14,13 +14,12 @@ from chatbot.tools.mapbox_client import (
 from chatbot.tools.models import (
     MapboxCategorySearchInput,
     MapboxForwardSearchInput,
-    MapboxListCategoriesInput,
     MapboxReverseLookupInput,
 )
 
 
 class MapboxToolClientTests(SimpleTestCase):
-    def test_four_methods_post_to_expected_endpoints_with_snake_case_json(self):
+    def test_three_methods_post_to_expected_endpoints_with_snake_case_json(self):
         requests: list[tuple[str, dict]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -28,8 +27,6 @@ class MapboxToolClientTests(SimpleTestCase):
             timeout = request.extensions["timeout"]
             self.assertEqual(timeout["read"], 7)
             self.assertEqual(request.headers["accept"], "application/json")
-            if request.url.path.endswith("mapbox-list-categories"):
-                return httpx.Response(200, json=CATEGORY_SUCCESS_RESPONSE)
             return httpx.Response(200, json=PLACE_SUCCESS_RESPONSE)
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
@@ -46,7 +43,6 @@ class MapboxToolClientTests(SimpleTestCase):
                     open_now=True,
                 )
             )
-            categories = client.list_categories(MapboxListCategoriesInput())
             category_search = client.category_search(
                 MapboxCategorySearchInput(
                     category_id="restaurant",
@@ -62,11 +58,9 @@ class MapboxToolClientTests(SimpleTestCase):
             )
 
         self.assertTrue(forward.success)
-        self.assertTrue(categories.success)
         self.assertTrue(category_search.success)
         self.assertTrue(reverse.success)
         self.assertEqual(forward.data.raw_response["type"], "FeatureCollection")
-        self.assertEqual(categories.data.raw_response["version"], "1")
         self.assertEqual(
             requests,
             [
@@ -74,7 +68,6 @@ class MapboxToolClientTests(SimpleTestCase):
                     "/api/chatbot/tools/mapbox-forward-search",
                     {"q": "coffee", "poi_category": "cafe", "open_now": True},
                 ),
-                ("/api/chatbot/tools/mapbox-list-categories", {}),
                 (
                     "/api/chatbot/tools/mapbox-category-search",
                     {"proximity": "108.2,16.1", "category_id": "restaurant"},
@@ -170,21 +163,6 @@ PLACE_SUCCESS_RESPONSE = {
             "type": "FeatureCollection",
             "features": [],
             "attribution": "Mapbox",
-        },
-    },
-    "errorCode": None,
-    "errorMessage": None,
-}
-
-CATEGORY_SUCCESS_RESPONSE = {
-    "success": True,
-    "data": {
-        "attribution": "Mapbox",
-        "categories": [],
-        "rawResponse": {
-            "listItems": [],
-            "attribution": "Mapbox",
-            "version": "1",
         },
     },
     "errorCode": None,
