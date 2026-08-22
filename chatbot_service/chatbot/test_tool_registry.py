@@ -44,6 +44,30 @@ class ToolRegistryTests(SimpleTestCase):
             "category_id",
             tools["mapbox_category_search"].args_schema.model_fields,
         )
+        self.assertIn(
+            "tên riêng",
+            tools["mapbox_forward_search"].description,
+        )
+        self.assertIn(
+            "ngữ nghĩa nhu cầu",
+            tools["mapbox_list_categories"].description,
+        )
+        self.assertIn(
+            "ý định chính",
+            tools["mapbox_category_search"].description,
+        )
+        self.assertIn(
+            "Không truyền nguyên câu hỏi tư vấn",
+            tools["mapbox_forward_search"].args_schema.model_fields[
+                "q"
+            ].description,
+        )
+        self.assertIn(
+            "mapbox_list_categories gần nhất",
+            tools["mapbox_category_search"].args_schema.model_fields[
+                "category_id"
+            ].description,
+        )
 
     def test_unknown_tool_and_invalid_arguments_never_call_handlers(self):
         unknown = self.registry.execute("delete_everything", {})

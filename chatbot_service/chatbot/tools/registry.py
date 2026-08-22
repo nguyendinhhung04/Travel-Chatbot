@@ -172,8 +172,10 @@ class ToolRegistry:
             _RegisteredTool(
                 name=MAPBOX_FORWARD_SEARCH_TOOL_NAME,
                 description=(
-                    "Tìm địa điểm, địa chỉ hoặc POI bằng văn bản. Dùng khi người dùng "
-                    "nêu tên nơi cần tìm hoặc muốn tìm một địa điểm cụ thể."
+                    "Tìm theo tên riêng, địa chỉ hoặc POI cụ thể mà người dùng đã nêu. "
+                    "Không dùng tool này cho câu hỏi gợi ý kiểu 'nên đi đâu' dựa trên "
+                    "cảm xúc, hoạt động, mùa hoặc thời điểm; trường hợp đó phải dùng "
+                    "mapbox_list_categories rồi mapbox_category_search."
                 ),
                 input_model=MapboxForwardSearchInput,
                 handler=self._mapbox_client.forward_search,
@@ -181,8 +183,9 @@ class ToolRegistry:
             _RegisteredTool(
                 name=MAPBOX_LIST_CATEGORIES_TOOL_NAME,
                 description=(
-                    "Lấy danh sách canonical category ID của Mapbox. Gọi tool này trước "
-                    "mapbox_category_search khi chưa biết category_id chính xác."
+                    "Lấy danh sách canonical category ID của Mapbox để chọn loại POI theo "
+                    "ngữ nghĩa nhu cầu. Bắt buộc gọi trước mapbox_category_search cho câu "
+                    "hỏi gợi ý theo hoạt động, không khí hoặc thời điểm."
                 ),
                 input_model=MapboxListCategoriesInput,
                 handler=self._mapbox_client.list_categories,
@@ -190,8 +193,10 @@ class ToolRegistry:
             _RegisteredTool(
                 name=MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
                 description=(
-                    "Tìm POI theo canonical category_id của Mapbox và các bộ lọc vị trí. "
-                    "category_id nên lấy từ mapbox_list_categories."
+                    "Gợi ý POI theo loại trải nghiệm và khu vực. Chọn category_id phù hợp "
+                    "với ý định chính từ kết quả mapbox_list_categories gần nhất; dùng "
+                    "near cho địa danh. Không chọn category mua sắm, thực phẩm hoặc nhà "
+                    "hàng chỉ vì câu hỏi có từ khóa phụ không liên quan."
                 ),
                 input_model=MapboxCategorySearchInput,
                 handler=self._mapbox_client.category_search,

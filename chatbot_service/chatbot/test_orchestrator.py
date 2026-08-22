@@ -1,13 +1,16 @@
 """Tests for the Gemini function-calling orchestration loop."""
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 
 from django.test import SimpleTestCase
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 from chatbot.orchestrator import (
     ChatOrchestrator,
     FINAL_SYNTHESIS_INSTRUCTION,
+    RAG_CONTEXT_TEMPLATE,
     SYSTEM_PROMPT,
     ToolInfrastructureError,
 )
@@ -23,9 +26,25 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertIn("website", SYSTEM_PROMPT)
         self.assertIn("rawResponse", SYSTEM_PROMPT)
         self.assertIn("thực sự có giá trị", SYSTEM_PROMPT)
+        self.assertIn("sáng tạo", SYSTEM_PROMPT)
+        self.assertNotIn("ngắn gọn", SYSTEM_PROMPT)
+        self.assertIn("chọn địa điểm theo ngữ nghĩa", SYSTEM_PROMPT)
+        self.assertIn("không theo từ khóa phụ", SYSTEM_PROMPT)
+        self.assertIn("đi chơi buổi đêm", SYSTEM_PROMPT)
+        self.assertIn("bộ lọc near", SYSTEM_PROMPT)
+        self.assertIn("không đưa nguyên câu hỏi tư vấn", SYSTEM_PROMPT)
+        self.assertIn("chọn đúng 3 canonical category_id khác nhau", SYSTEM_PROMPT)
+        self.assertIn("rating lớn hơn 4.0", SYSTEM_PROMPT)
+        self.assertIn("Không tự tạo rating", SYSTEM_PROMPT)
+        self.assertIn("được backend truy vấn mặc định", SYSTEM_PROMPT)
+        self.assertIn("phải ưu tiên sử dụng", SYSTEM_PROMPT)
+        self.assertIn("kiến thức đáng tin cậy của mô hình", SYSTEM_PROMPT)
+        self.assertIn("không bắt buộc phải đủ 100%", SYSTEM_PROMPT)
+        self.assertIn("nguồn ưu tiên nếu nó liên quan", RAG_CONTEXT_TEMPLATE)
+        self.assertIn("có thể bổ sung kiến thức đáng tin cậy", FINAL_SYNTHESIS_INSTRUCTION)
         self.assertIn("quy tắc hiển thị chi tiết địa điểm", FINAL_SYNTHESIS_INSTRUCTION)
 
-    def test_direct_greeting_returns_without_executing_tools(self):
+    def test_direct_greeting_still_queries_rag_before_answering(self):
         model = StubChatModel(bound_responses=[AIMessage(content=" Xin chào! ")])
         registry = StubRegistry()
 
@@ -35,10 +54,63 @@ class ChatOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(result.answer, "Xin chào!")
         self.assertEqual(result.sources, [])
-        self.assertEqual(registry.calls, [])
+        self.assertEqual(
+            registry.calls,
+            [("search_travel_knowledge", {"query": "Xin chào"})],
+        )
         self.assertEqual(len(model.bound.invocations), 1)
 
-    def test_rag_tool_result_is_sent_back_to_model_with_source(self):
+    def test_rag_tool_is_not_exposed_to_gemini_function_calling(self):
+        model = StubChatModel(bound_responses=[])
+        registry = StubRegistry(
+            langchain_tools=[
+                StubDeclaredTool("search_travel_knowledge"),
+                StubDeclaredTool("mapbox_forward_search"),
+                StubDeclaredTool("mapbox_category_search"),
+            ]
+        )
+
+        ChatOrchestrator(model, registry, max_tool_calls=3)
+
+        self.assertEqual(
+            [tool.name for tool in model.bound_tools],
+            ["mapbox_forward_search", "mapbox_category_search"],
+        )
+
+    def test_prints_each_gemini_function_calling_response_only(self):
+        registry = StubRegistry(
+            {
+                "mapbox_list_categories": ToolExecution(
+                    content='{"secretToolPayload":true}',
+                    sources=(),
+                    success=True,
+                    system_failure=False,
+                )
+            }
+        )
+        model = StubChatModel(
+            bound_responses=[
+                tool_call_message("mapbox_list_categories", {"language": "vi"}, "1"),
+                AIMessage(content="Đã chọn category phù hợp."),
+            ]
+        )
+
+        terminal_output = StringIO()
+        with redirect_stdout(terminal_output):
+            ChatOrchestrator(model, registry, max_tool_calls=3).answer(
+                "Câu hỏi người dùng không được in lại"
+            )
+
+        printed_output = terminal_output.getvalue()
+        self.assertEqual(printed_output.count("Gemini function-calling response:"), 2)
+        self.assertIn("Gemini function-calling response:", printed_output)
+        self.assertIn('"name": "mapbox_list_categories"', printed_output)
+        self.assertIn('"language": "vi"', printed_output)
+        self.assertIn("Đã chọn category phù hợp.", printed_output)
+        self.assertNotIn("Câu hỏi người dùng không được in lại", printed_output)
+        self.assertNotIn("secretToolPayload", printed_output)
+
+    def test_rag_is_queried_by_default_and_added_to_system_context(self):
         source = KnowledgeBaseSource(title="Huế", source="hue.md")
         registry = StubRegistry(
             {
@@ -51,10 +123,7 @@ class ChatOrchestratorTests(SimpleTestCase):
             }
         )
         model = StubChatModel(
-            bound_responses=[
-                tool_call_message("search_travel_knowledge", {"query": "Huế"}, "1"),
-                AIMessage(content="Huế có nhiều di sản."),
-            ]
+            bound_responses=[AIMessage(content="Huế có nhiều di sản.")]
         )
 
         result = ChatOrchestrator(model, registry, max_tool_calls=3).answer(
@@ -62,10 +131,43 @@ class ChatOrchestratorTests(SimpleTestCase):
         )
 
         self.assertEqual(result.sources, [source])
-        second_messages = model.bound.invocations[1]
-        self.assertIsInstance(second_messages[-1], ToolMessage)
-        self.assertEqual(second_messages[-1].tool_call_id, "1")
-        self.assertIn('"success":true', second_messages[-1].content)
+        self.assertEqual(
+            registry.calls,
+            [("search_travel_knowledge", {"query": "Huế có gì?"})],
+        )
+        first_messages = model.bound.invocations[0]
+        self.assertIsInstance(first_messages[1], SystemMessage)
+        self.assertIn("kết quả Knowledge Base", first_messages[1].content)
+        self.assertIn('"success":true', first_messages[1].content)
+        self.assertFalse(
+            any(isinstance(message, ToolMessage) for message in first_messages)
+        )
+
+    def test_rag_failure_does_not_block_model_knowledge_answer(self):
+        registry = StubRegistry(
+            {
+                "search_travel_knowledge": ToolExecution(
+                    content='{"success":false}',
+                    sources=(),
+                    success=False,
+                    system_failure=True,
+                    error_code="rag_unavailable",
+                )
+            }
+        )
+        model = StubChatModel(
+            bound_responses=[AIMessage(content="Câu trả lời từ kiến thức mô hình.")]
+        )
+
+        result = ChatOrchestrator(model, registry, max_tool_calls=3).answer(
+            "Giới thiệu Hà Nội"
+        )
+
+        self.assertEqual(result.answer, "Câu trả lời từ kiến thức mô hình.")
+        self.assertIn(
+            "tiếp tục trả lời bằng kiến thức đáng tin cậy của mô hình",
+            model.bound.invocations[0][1].content,
+        )
 
     def test_sequential_category_tools_are_supported_and_sources_deduplicated(self):
         mapbox_source = MapboxSource(attribution="Mapbox")
@@ -93,8 +195,63 @@ class ChatOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(
             [name for name, _ in registry.calls],
-            ["mapbox_list_categories", "mapbox_category_search"],
+            [
+                "search_travel_knowledge",
+                "mapbox_list_categories",
+                "mapbox_category_search",
+            ],
         )
+        self.assertEqual(result.sources, [mapbox_source])
+
+    def test_open_recommendation_can_search_three_selected_categories(self):
+        mapbox_source = MapboxSource(attribution="Mapbox")
+        registry = StubRegistry(
+            {
+                "mapbox_list_categories": successful_execution(mapbox_source),
+                "mapbox_category_search": successful_execution(mapbox_source),
+            }
+        )
+        model = StubChatModel(
+            bound_responses=[
+                tool_call_message("mapbox_list_categories", {"language": "vi"}, "1"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        tool_call(
+                            "mapbox_category_search",
+                            {"category_id": "nightlife", "near": "Hà Nội"},
+                            "2",
+                        ),
+                        tool_call(
+                            "mapbox_category_search",
+                            {"category_id": "cafe", "near": "Hà Nội"},
+                            "3",
+                        ),
+                        tool_call(
+                            "mapbox_category_search",
+                            {"category_id": "observation_deck", "near": "Hà Nội"},
+                            "4",
+                        ),
+                    ],
+                ),
+            ],
+            final_responses=[AIMessage(content="Đã tổng hợp ba nhóm địa điểm phù hợp.")],
+        )
+
+        result = ChatOrchestrator(model, registry, max_tool_calls=4).answer(
+            "Hà Nội mùa thu nên đi đâu để chill và lãng mạn?"
+        )
+
+        category_calls = [
+            arguments
+            for name, arguments in registry.calls
+            if name == "mapbox_category_search"
+        ]
+        self.assertEqual(
+            [arguments["category_id"] for arguments in category_calls],
+            ["nightlife", "cafe", "observation_deck"],
+        )
+        self.assertEqual(result.answer, "Đã tổng hợp ba nhóm địa điểm phù hợp.")
         self.assertEqual(result.sources, [mapbox_source])
 
     def test_multiple_tools_in_one_turn_collect_rag_and_mapbox_sources(self):
@@ -108,13 +265,7 @@ class ChatOrchestratorTests(SimpleTestCase):
         )
         model = StubChatModel(
             bound_responses=[
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        tool_call("search_travel_knowledge", {"query": "Huế"}, "1"),
-                        tool_call("mapbox_forward_search", {"q": "Đại Nội"}, "2"),
-                    ],
-                ),
+                tool_call_message("mapbox_forward_search", {"q": "Đại Nội"}, "2"),
                 AIMessage(content="Đại Nội là điểm tham quan nổi bật tại Huế."),
             ]
         )
@@ -129,7 +280,7 @@ class ChatOrchestratorTests(SimpleTestCase):
             for message in model.bound.invocations[1]
             if isinstance(message, ToolMessage)
         ]
-        self.assertEqual([message.tool_call_id for message in tool_messages], ["1", "2"])
+        self.assertEqual([message.tool_call_id for message in tool_messages], ["2"])
 
     def test_tool_budget_executes_only_three_calls_then_forces_final_model(self):
         registry = StubRegistry(default_execution=successful_execution())
@@ -152,7 +303,8 @@ class ChatOrchestratorTests(SimpleTestCase):
             "Câu hỏi phức tạp"
         )
 
-        self.assertEqual(len(registry.calls), 3)
+        self.assertEqual(len(registry.calls), 4)
+        self.assertEqual(registry.calls[0][0], "search_travel_knowledge")
         self.assertEqual(result.answer, "Câu trả lời tổng hợp.")
         self.assertEqual(len(model.final_invocations), 1)
         budget_messages = [
@@ -217,20 +369,36 @@ def successful_execution(*sources):
 
 
 class StubRegistry:
-    langchain_tools = []
-
-    def __init__(self, executions=None, default_execution=None):
+    def __init__(
+        self,
+        executions=None,
+        default_execution=None,
+        langchain_tools=None,
+    ):
         self.executions = executions or {}
         self.default_execution = default_execution
+        self.langchain_tools = list(langchain_tools or [])
         self.calls = []
 
     def execute(self, name, arguments):
         self.calls.append((name, arguments))
         if name in self.executions:
             return self.executions[name]
+        if name == "search_travel_knowledge":
+            return ToolExecution(
+                content='{"success":true,"data":{"chunks":[],"sources":[]}}',
+                sources=(),
+                success=True,
+                system_failure=False,
+            )
         if self.default_execution is not None:
             return self.default_execution
         raise AssertionError(f"Unexpected tool call: {name}")
+
+
+class StubDeclaredTool:
+    def __init__(self, name):
+        self.name = name
 
 
 class StubBoundModel:

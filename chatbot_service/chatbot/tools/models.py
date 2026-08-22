@@ -23,10 +23,19 @@ class ToolModel(BaseModel):
 
 
 class _MapboxSearchFilters(ToolModel):
-    language: NonEmptyString | None = None
+    language: NonEmptyString | None = Field(
+        default=None,
+        description="Ngôn ngữ kết quả, ưu tiên 'vi' khi người dùng hỏi bằng tiếng Việt.",
+    )
     limit: int | None = Field(default=None, ge=1, le=25)
     proximity: NonEmptyString | None = None
-    near: NonEmptyString | None = None
+    near: NonEmptyString | None = Field(
+        default=None,
+        description=(
+            "Địa danh làm khu vực tìm kiếm, ví dụ 'Hà Nội'. Dùng cho nơi người dùng "
+            "muốn đi; không dùng làm category_id."
+        ),
+    )
     bbox: NonEmptyString | None = None
     radius: float | None = Field(default=None, ge=0.00001, le=10)
     country: NonEmptyString | None = None
@@ -46,9 +55,23 @@ class _MapboxSearchFilters(ToolModel):
 class MapboxForwardSearchInput(_MapboxSearchFilters):
     """Arguments accepted by the Mapbox forward-search typed endpoint."""
 
-    q: str = Field(min_length=1, max_length=256)
+    q: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Tên riêng, địa chỉ hoặc POI cụ thể cần tìm. Không truyền nguyên câu hỏi "
+            "tư vấn, cảm xúc như 'chill/lãng mạn', mùa hoặc thời điểm vào q."
+        ),
+    )
     limit: int | None = Field(default=None, ge=1, le=10)
-    poi_category: NonEmptyString | None = None
+    poi_category: NonEmptyString | None = Field(
+        default=None,
+        description=(
+            "Bộ lọc category chỉ dùng kèm một q là tên/địa chỉ cụ thể; với nhu cầu "
+            "gợi ý theo trải nghiệm, dùng mapbox_list_categories rồi "
+            "mapbox_category_search."
+        ),
+    )
     open_now: bool | None = None
     minimum_rating: float | None = Field(default=None, ge=0, le=5)
     price_levels: NonEmptyString | None = None
@@ -65,7 +88,13 @@ class MapboxListCategoriesInput(ToolModel):
 class MapboxCategorySearchInput(_MapboxSearchFilters):
     """Arguments accepted by the Mapbox category-search typed endpoint."""
 
-    category_id: NonEmptyString
+    category_id: NonEmptyString = Field(
+        description=(
+            "Canonical category ID có thật trong kết quả mapbox_list_categories gần "
+            "nhất và phù hợp với ý định chính của người dùng. Không suy ra category từ "
+            "từ khóa phụ như mùa, cảm xúc hoặc tên địa danh."
+        )
+    )
 
 
 class MapboxReverseLookupInput(ToolModel):

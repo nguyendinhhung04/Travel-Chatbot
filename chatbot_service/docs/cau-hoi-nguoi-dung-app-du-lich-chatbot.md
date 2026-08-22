@@ -6,10 +6,10 @@ Nếu tôi là **người dùng thật của app du lịch có chatbot**, tôi s
 
 Tôi sẽ bắt đầu bằng những câu khá chung:
 
-- “Cuối tuần này tôi nên đi đâu gần Hà Nội?” --> destination discovery: Tìm Hà Nội --> bbox/ tâm --> Tìm địa điểm quanh HN với category, rating
+- “Cuối tuần này tôi nên đi đâu gần Hà Nội?” --> Lấy category --> 
 - “Tôi có 3 ngày 2 đêm thì nên đi Đà Nẵng hay Nha Trang?” 
-- “Tháng 9 đi Đà Lạt có ổn không?” 
-- “Tôi muốn đi nơi nào mát, ít đông và chi phí khoảng 3 triệu.”
+- “Tháng 9 đi Đà Lạt có ổn không?”  --> RAG
+- “Tôi muốn đi nơi nào mát, ít đông và chi phí khoảng 3 triệu.” --> RAG
 - “Có địa điểm nào phù hợp cho nhóm 4 người không?”
 - “Tôi thích thiên nhiên hơn khu vui chơi, gợi ý cho tôi vài nơi.”
 - “Tôi đi cùng bố mẹ, nên chọn địa điểm nào đỡ phải đi bộ nhiều?”

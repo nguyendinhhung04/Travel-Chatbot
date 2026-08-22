@@ -10,6 +10,7 @@ from langchain_core.vectorstores import VectorStore
 from chatbot.orchestrator import ChatOrchestratorResult
 from chatbot.rag.rag_chain import (
     INSUFFICIENT_CONTEXT_MESSAGE,
+    RAG_PROMPT,
     RAGResult,
     answer_question,
     build_prompt_template,
@@ -160,7 +161,7 @@ class RAGChainTests(SimpleTestCase):
         chat_model_mock.assert_called_once_with(
             model="test-model",
             api_key="test-key",
-            temperature=0,
+            temperature=0.8,
         )
 
     def test_format_context_includes_content_and_metadata(self):
@@ -186,6 +187,9 @@ class RAGChainTests(SimpleTestCase):
         self.assertIn("Ưu tiên sử dụng thông tin trong Context", rendered)
         self.assertIn("có thể dùng kiến thức của mình để bổ sung", rendered)
         self.assertIn(INSUFFICIENT_CONTEXT_MESSAGE, rendered)
+        self.assertIn("sáng tạo", RAG_PROMPT)
+        self.assertNotIn("ngắn gọn", RAG_PROMPT)
+        self.assertNotIn("đoạn ngắn", RAG_PROMPT)
 
     @patch("chatbot.rag.rag_chain.retrieve_documents")
     def test_answer_question_passes_context_to_chain(self, retrieve_mock):
