@@ -112,6 +112,7 @@ class ChatOrchestrator:
             history=history,
             current_location=current_location,
         )
+        self._print_semantic_interpretation(interpretation)
         planned_calls = plan_tools(interpretation)[: self._max_tool_calls]
         executions = self._execute_plan(planned_calls)
         self._raise_if_all_tools_had_system_failures(executions)
@@ -201,6 +202,24 @@ class ChatOrchestrator:
         if not isinstance(response, AIMessage):
             raise RuntimeError("Gemini returned an unsupported response type")
         return response
+
+    @staticmethod
+    def _print_semantic_interpretation(
+        interpretation: SemanticInterpretation,
+    ) -> None:
+        """Print only Gemini's validated semantic result, never its request."""
+        interpretation_json = json.dumps(
+            interpretation.model_dump(mode="json", exclude_none=True),
+            ensure_ascii=False,
+            indent=2,
+        )
+        output = f"SemanticInterpretation result:\n{interpretation_json}\n"
+        stdout_buffer = getattr(sys.stdout, "buffer", None)
+        if stdout_buffer is not None:
+            stdout_buffer.write(output.encode("utf-8"))
+            stdout_buffer.flush()
+            return
+        print(output, end="", flush=True)
 
     @staticmethod
     def _print_model_response(response: AIMessage) -> None:
