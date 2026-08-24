@@ -36,6 +36,23 @@ class ToolPlannerTests(SimpleTestCase):
             ],
         )
 
+    def test_rag_uses_semantic_destination_as_metadata_filter(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.TRAVEL_QA,
+            actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
+            entities=SemanticEntities(destinations=["Đà Lạt"]),
+        )
+
+        call = plan_tools(interpretation)[0]
+
+        self.assertEqual(
+            call.arguments,
+            {
+                "query": "Tháng 9 đi Đà Lạt có ổn không?",
+                "destination": "Đà Lạt",
+            },
+        )
+
     def test_named_place_uses_forward_search_with_semantic_filters(self):
         interpretation = build_interpretation(
             intent=TravelIntent.PLACE_DETAILS,

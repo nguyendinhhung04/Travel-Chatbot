@@ -79,10 +79,16 @@ def plan_tools(
         interpretation.primary_intent in _RAG_INTENTS
         or action_types.intersection(_RAG_ACTIONS)
     ):
+        rag_arguments: dict[str, Any] = {
+            "query": interpretation.normalized_query,
+        }
+        rag_destination = _primary_destination(interpretation)
+        if rag_destination is not None:
+            rag_arguments["destination"] = rag_destination
         calls.append(
             PlannedToolCall(
                 SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
-                {"query": interpretation.normalized_query},
+                rag_arguments,
             )
         )
 
@@ -103,6 +109,16 @@ def plan_tools(
             calls.append(reverse_call)
 
     return _deduplicate_calls(calls)
+
+
+def _primary_destination(
+    interpretation: SemanticInterpretation,
+) -> str | None:
+    if interpretation.location.near:
+        return interpretation.location.near
+    if interpretation.entities.destinations:
+        return interpretation.entities.destinations[0]
+    return None
 
 
 def _plan_named_place_calls(

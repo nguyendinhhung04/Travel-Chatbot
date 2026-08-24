@@ -100,6 +100,10 @@ class SearchTravelKnowledgeInput(ToolModel):
     """Arguments accepted by the local travel-knowledge retrieval tool."""
 
     query: str = Field(min_length=1, max_length=2000)
+    destination: NonEmptyString | None = Field(
+        default=None,
+        description="Điểm đến dùng để lọc metadata của Knowledge Base.",
+    )
 
 
 class MapboxPlaceItem(ToolModel):

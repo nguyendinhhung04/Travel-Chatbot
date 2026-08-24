@@ -59,6 +59,7 @@ class TravelKnowledgeToolTests(SimpleTestCase):
             "Đại Nội ở đâu?",
             retriever=retriever,
             top_k=3,
+            destination=None,
         )
 
     @patch("chatbot.tools.rag_tool.retrieve_documents", return_value=[])
@@ -77,6 +78,24 @@ class TravelKnowledgeToolTests(SimpleTestCase):
             "Không có dữ liệu",
             retriever=None,
             top_k=None,
+            destination=None,
+        )
+
+    @patch("chatbot.tools.rag_tool.retrieve_documents", return_value=[])
+    def test_tool_passes_destination_to_retrieval(self, retrieve_mock):
+        result = search_travel_knowledge(
+            SearchTravelKnowledgeInput(
+                query="Đi chơi Đà Lạt",
+                destination="Đà Lạt",
+            )
+        )
+
+        self.assertTrue(result.success)
+        retrieve_mock.assert_called_once_with(
+            "Đi chơi Đà Lạt",
+            retriever=None,
+            top_k=None,
+            destination="Đà Lạt",
         )
 
     def test_build_data_uses_safe_metadata_defaults_and_skips_blank_chunks(self):

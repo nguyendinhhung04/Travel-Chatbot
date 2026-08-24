@@ -16,7 +16,11 @@ from chatbot.rag.rag_chain import (
     build_prompt_template,
     format_context,
 )
-from chatbot.rag.retrieval import get_retriever, retrieve_documents
+from chatbot.rag.retrieval import (
+    get_retriever,
+    normalize_destination,
+    retrieve_documents,
+)
 from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
 from chatbot.views import CHAT_SERVICE_ERROR
 
@@ -63,6 +67,26 @@ class RetrievalTests(SimpleTestCase):
             search_type="similarity_score_threshold",
             search_kwargs={"k": 3, "score_threshold": 0.5},
         )
+
+    @override_settings(RAG_RETRIEVAL_TOP_K=5, RAG_RELEVANCE_THRESHOLD=0.5)
+    def test_get_retriever_filters_by_normalized_destination(self):
+        vector_store = MagicMock()
+
+        get_retriever(vector_store=vector_store, destination="Đà Lạt")
+
+        vector_store.as_retriever.assert_called_once_with(
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": 5,
+                "score_threshold": 0.5,
+                "filter": {"destination": "da-lat"},
+            },
+        )
+
+    def test_normalize_destination_handles_vietnamese_names(self):
+        self.assertEqual(normalize_destination(" Đà Lạt "), "da-lat")
+        self.assertEqual(normalize_destination("Hội An"), "hoi-an")
+        self.assertIsNone(normalize_destination("   "))
 
     @override_settings(RAG_RETRIEVAL_TOP_K=5, RAG_RELEVANCE_THRESHOLD=0.5)
     def test_retriever_filters_scores_below_threshold_and_keeps_boundary(self):
