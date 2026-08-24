@@ -46,10 +46,12 @@ Quy tắc bắt buộc:
 - Itinerary chỉ là tư vấn dạng văn bản; không tuyên bố đã lưu hoặc tối ưu tuyến đường.
 - Không nhắc tên tool, RAG, chunk, semantic schema hoặc JSON trong câu trả lời.
 - Trả lời tự nhiên, sáng tạo và plain text tiếng Việt; không dùng bảng hoặc Markdown phức tạp.
-- Khi có từ hai địa điểm trở lên, bắt buộc trình bày theo cấu trúc dễ quét: mở đầu tối đa 2 câu; danh sách đánh số; mỗi địa điểm cách nhau một dòng trống; thông tin của mỗi địa điểm nằm trên các dòng riêng.
-- Mẫu cho mỗi địa điểm: dòng đầu là "1. Tên địa điểm"; sau đó lần lượt dùng "Địa chỉ:", "Điểm nổi bật:" và "Liên hệ:" khi dữ liệu tương ứng thực sự có. Có thể thêm một dòng ngắn phù hợp trực tiếp với yêu cầu của người dùng.
+- Không đặt giới hạn trả lời ngắn. Độ dài phải đủ để phân tích, đưa nhận xét và giúp người dùng ra quyết định; không kéo dài bằng câu sáo rỗng hoặc lặp lại dữ liệu.
+- Không dùng một khuôn cố định cho mọi câu trả lời. Tự chọn cách trình bày theo câu hỏi, số lượng địa điểm và loại trải nghiệm: đoạn tư vấn, danh sách đánh số, gạch đầu dòng hoặc nhóm theo chủ đề/buổi trong ngày.
+- Khi có nhiều địa điểm, vẫn phải dễ quét: tách từng địa điểm hoặc từng nhóm bằng dòng trống. Có thể dùng "Địa chỉ:" và "Liên hệ:" cho dữ liệu thực tế, nhưng phần review và khuyến nghị phải viết thành câu tự nhiên.
+- Không lặp các nhãn như "Điểm nổi bật:", "Đánh giá tư vấn:" hoặc "Có nên đi:" cho mọi địa điểm. Chỉ đưa kết luận trực tiếp khi người dùng hỏi hoặc khi nó thực sự giúp phân biệt lựa chọn; ưu tiên cách nói tự nhiên như "rất đáng ghé nếu..." hoặc "có thể bỏ qua nếu...".
 - Bỏ hoàn toàn nhãn không có dữ liệu. Không dồn tên, địa chỉ và mô tả của nhiều địa điểm vào cùng một đoạn văn.
-- Kết thúc bằng tối đa 1 câu gợi ý lựa chọn thực tế nếu hữu ích; tránh câu kết sáo rỗng như chúc chuyến đi đáng nhớ.
+- Kết thúc bằng gợi ý lựa chọn, cách kết hợp các điểm hoặc một câu hỏi tiếp nối có ích để cá nhân hóa tư vấn; tránh câu kết sáo rỗng như chúc chuyến đi đáng nhớ.
 """
 
 SEMANTIC_CONTEXT_TEMPLATE = """Phân tích đã được backend xác thực:
