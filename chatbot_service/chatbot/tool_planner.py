@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from chatbot.category_resolver import resolve_mapbox_categories
 from chatbot.intent import TravelIntent
 from chatbot.semantic import (
     InterpretationStatus,
@@ -22,11 +21,12 @@ from chatbot.tools.rag_tool import SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME
 
 
 DEFAULT_MAPBOX_RESULT_LIMIT = 5
+DESTINATION_FORWARD_RESULT_LIMIT = 3
 DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT = 10
-DEFAULT_MAPBOX_MINIMUM_RATING = 4.0
+DEFAULT_MAPBOX_MINIMUM_RATING = 0.0
 DEFAULT_MAPBOX_RANK_STRATEGY = "relevance"
 DEFAULT_MAX_CATEGORIES = 3
-MAPBOX_POI_TYPE = "poi"
+TOURIST_ATTRACTION_CATEGORY_ID = "tourist_attraction"
 _KILOMETERS_PER_DEGREE = 111.32
 
 _RAG_INTENTS = frozenset(
@@ -55,6 +55,8 @@ class PlannedToolCall:
 
     name: str
     arguments: dict[str, Any]
+    destination: str | None = None
+    evidence_kind: str | None = None
 
 
 def plan_tools(
@@ -76,6 +78,15 @@ def plan_tools(
     calls: list[PlannedToolCall] = []
 
     if (
+        SemanticActionType.DISCOVER_PLACES in action_types
+        and _needs_destination_lookup(interpretation)
+        and interpretation.primary_intent != TravelIntent.DESTINATION_DISCOVERY
+    ):
+        destination_call = _plan_destination_forward_call(interpretation)
+        if destination_call is not None:
+            calls.append(destination_call)
+
+    if (
         interpretation.primary_intent in _RAG_INTENTS
         or action_types.intersection(_RAG_ACTIONS)
     ):
@@ -89,8 +100,19 @@ def plan_tools(
             PlannedToolCall(
                 SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
                 rag_arguments,
+                destination=rag_destination,
+                evidence_kind="knowledge",
             )
         )
+
+    if (
+        interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
+        and SemanticActionType.DISCOVER_PLACES in action_types
+        and _needs_destination_lookup(interpretation)
+    ):
+        destination_call = _plan_destination_forward_call(interpretation)
+        if destination_call is not None:
+            calls.append(destination_call)
 
     if SemanticActionType.FIND_NAMED_PLACE in action_types:
         calls.extend(_plan_named_place_calls(interpretation))
@@ -119,6 +141,37 @@ def _primary_destination(
     if interpretation.entities.destinations:
         return interpretation.entities.destinations[0]
     return None
+
+
+def _needs_destination_lookup(
+    interpretation: SemanticInterpretation,
+) -> bool:
+    return (
+        interpretation.location.longitude is None
+        and interpretation.location.latitude is None
+        and _primary_destination(interpretation) is not None
+    )
+
+
+def _plan_destination_forward_call(
+    interpretation: SemanticInterpretation,
+) -> PlannedToolCall | None:
+    destination = _primary_destination(interpretation)
+    if destination is None:
+        return None
+    return PlannedToolCall(
+        MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+        {
+            "q": destination,
+            "language": "vi",
+            "limit": DESTINATION_FORWARD_RESULT_LIMIT,
+            "types": "city,place",
+            "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
+            "auto_complete": False,
+        },
+        destination=destination,
+        evidence_kind="destination_location",
+    )
 
 
 def _plan_named_place_calls(
@@ -163,11 +216,10 @@ def _plan_category_calls(
     *,
     max_categories: int,
 ) -> list[PlannedToolCall]:
-    categories = resolve_mapbox_categories(
-        interpretation,
-        max_categories=max_categories,
-    )
+    categories = (TOURIST_ATTRACTION_CATEGORY_ID,)[:max_categories]
     common_arguments = _mapbox_location_arguments(interpretation)
+    if _needs_destination_lookup(interpretation):
+        common_arguments.pop("near", None)
     constraints = interpretation.constraints
     minimum_rating = (
         constraints.minimum_rating
@@ -181,10 +233,11 @@ def _plan_category_calls(
                 "category_id": category,
                 "language": "vi",
                 "limit": DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT,
-                "types": MAPBOX_POI_TYPE,
                 "minimum_rating": minimum_rating,
                 **common_arguments,
             },
+            destination=_primary_destination(interpretation),
+            evidence_kind="poi",
         )
         for category in categories
     ]
@@ -260,7 +313,8 @@ __all__ = [
     "DEFAULT_MAPBOX_RANK_STRATEGY",
     "DEFAULT_MAPBOX_RESULT_LIMIT",
     "DEFAULT_MAX_CATEGORIES",
-    "MAPBOX_POI_TYPE",
+    "DESTINATION_FORWARD_RESULT_LIMIT",
+    "TOURIST_ATTRACTION_CATEGORY_ID",
     "PlannedToolCall",
     "plan_tools",
 ]

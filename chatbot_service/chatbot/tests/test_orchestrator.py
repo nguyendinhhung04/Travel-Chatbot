@@ -13,6 +13,11 @@ from chatbot.orchestrator import (
     SYSTEM_PROMPT,
     ToolInfrastructureError,
 )
+from chatbot.response_policy import (
+    DESTINATION_DISCOVERY_POLICY,
+    MAPBOX_FIRST_POLICY,
+    RAG_FIRST_ADVICE_POLICY,
+)
 from chatbot.semantic import (
     ConversationMessage,
     InterpretationStatus,
@@ -31,7 +36,8 @@ class ChatOrchestratorTests(SimpleTestCase):
     def test_system_prompt_preserves_q_and_a_scope_and_place_safety(self):
         self.assertIn("fullAddress", SYSTEM_PROMPT)
         self.assertIn("rawResponse", SYSTEM_PROMPT)
-        self.assertIn("mapboxId xuất hiện trong data.results", SYSTEM_PROMPT)
+        self.assertNotIn("Chỉ được đề xuất địa điểm có mapboxId", SYSTEM_PROMPT)
+        self.assertIn("chính sách evidence theo primary_intent", SYSTEM_PROMPT)
         self.assertIn("không tự tạo rating", SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SYSTEM_PROMPT)
         self.assertIn("unsupported", SYSTEM_PROMPT)
@@ -75,8 +81,9 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertEqual(interpreter.calls[0][0], "Huế có gì?")
         messages = model.invocations[0]
         self.assertIsInstance(messages[0], SystemMessage)
-        self.assertIn('"primary_intent":"travel_qa"', messages[1].content)
-        self.assertIn('"success":true', messages[2].content)
+        self.assertEqual(messages[1].content, RAG_FIRST_ADVICE_POLICY)
+        self.assertIn('"primary_intent":"travel_qa"', messages[2].content)
+        self.assertIn('"success":true', messages[3].content)
         self.assertEqual(
             [message.content for message in messages if isinstance(message, HumanMessage)],
             ["Tôi thích lịch sử", "Huế có gì?"],
@@ -90,7 +97,16 @@ class ChatOrchestratorTests(SimpleTestCase):
             entities=SemanticEntities(destinations=["Hà Nội"]),
         )
         mapbox_source = MapboxSource(attribution="Mapbox")
-        registry = StubRegistry(default_execution=successful_execution(mapbox_source))
+        registry = StubRegistry(
+            {
+                "mapbox_forward_search": mapbox_place_execution(
+                    105.854041,
+                    21.028333,
+                    mapbox_source,
+                ),
+            },
+            default_execution=successful_execution(mapbox_source),
+        )
         model = StubChatModel([AIMessage(content="Đã tìm thấy địa điểm phù hợp.")])
 
         result = ChatOrchestrator(
@@ -101,16 +117,78 @@ class ChatOrchestratorTests(SimpleTestCase):
         ).answer("Buổi tối ở Hà Nội có gì chơi?")
 
         self.assertEqual(
-            [arguments["category_id"] for _, arguments in registry.calls],
-            ["nightlife", "bar", "music_venue"],
+            [name for name, _ in registry.calls],
+            ["mapbox_forward_search", "mapbox_category_search"],
         )
-        self.assertTrue(
-            all(arguments["near"] == "Hà Nội" for _, arguments in registry.calls)
+        self.assertEqual(
+            registry.calls[1][1],
+            {
+                "category_id": "tourist_attraction",
+                "language": "vi",
+                "limit": 10,
+                "minimum_rating": 0.0,
+                "proximity": "105.854041,21.028333",
+            },
         )
         self.assertEqual(result.sources, [mapbox_source])
+        self.assertEqual(model.invocations[0][1].content, MAPBOX_FIRST_POLICY)
         self.assertFalse(
             any(name == "mapbox_list_categories" for name, _ in registry.calls)
         )
+
+    def test_dalat_discovery_resolves_coordinates_then_searches_one_category(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.DESTINATION_DISCOVERY,
+            actions=[SemanticActionType.DISCOVER_PLACES],
+            domains=[TravelDomain.ATTRACTION, TravelDomain.NATURE],
+            entities=SemanticEntities(destinations=["Đà Lạt"]),
+            location=SemanticLocation(near="Đà Lạt"),
+            normalized_query="Đi chơi Đà Lạt thì đi đâu?",
+        )
+        mapbox_source = MapboxSource(attribution="Mapbox")
+        registry = StubRegistry(
+            {
+                "mapbox_forward_search": mapbox_place_execution(
+                    108.458313,
+                    11.940419,
+                    mapbox_source,
+                ),
+                "search_travel_knowledge": successful_execution(),
+            },
+            default_execution=successful_execution(mapbox_source),
+        )
+        model = StubChatModel([AIMessage(content="Đã tìm thấy điểm tham quan.")])
+
+        result = ChatOrchestrator(
+            model,
+            registry,
+            semantic_interpreter=StubInterpreter(interpretation),
+            max_tool_calls=4,
+        ).answer("Đi chơi Đà Lạt thì đi đâu?")
+
+        self.assertEqual(
+            [name for name, _ in registry.calls],
+            [
+                "search_travel_knowledge",
+                "mapbox_forward_search",
+                "mapbox_category_search",
+            ],
+        )
+        category_arguments = registry.calls[2][1]
+        self.assertEqual(category_arguments["category_id"], "tourist_attraction")
+        self.assertEqual(category_arguments["proximity"], "108.458313,11.940419")
+        self.assertNotIn("types", category_arguments)
+        self.assertNotIn("near", category_arguments)
+        self.assertEqual(result.sources, [mapbox_source])
+        messages = model.invocations[0]
+        self.assertEqual(
+            messages[1].content,
+            DESTINATION_DISCOVERY_POLICY,
+        )
+        self.assertIn("Knowledge Base", messages[1].content)
+        self.assertIn("kiến thức ổn định", messages[1].content)
+        self.assertIn("Mapbox Category Search chỉ để bổ sung", messages[1].content)
+        self.assertIn("có mapboxId", messages[1].content)
 
     def test_general_chat_and_clarification_do_not_call_tools(self):
         cases = (
@@ -161,8 +239,8 @@ class ChatOrchestratorTests(SimpleTestCase):
         ).answer("Gợi ý lịch trình thiên nhiên ở Đà Nẵng")
 
         self.assertEqual(len(registry.calls), 2)
-        self.assertEqual(registry.calls[0][0], "search_travel_knowledge")
-        self.assertEqual(registry.calls[1][0], "mapbox_category_search")
+        self.assertEqual(registry.calls[0][0], "mapbox_forward_search")
+        self.assertEqual(registry.calls[1][0], "search_travel_knowledge")
 
     def test_all_planned_tools_failing_from_infrastructure_raises(self):
         interpretation = build_interpretation(
@@ -250,10 +328,11 @@ def build_interpretation(
     entities: SemanticEntities | None = None,
     location: SemanticLocation | None = None,
     missing_information: list[str] | None = None,
+    normalized_query: str = "Huế có gì?",
 ) -> SemanticInterpretation:
     return SemanticInterpretation(
         primary_intent=intent,
-        normalized_query="Huế có gì?",
+        normalized_query=normalized_query,
         travel_domains=domains or [],
         entities=entities or SemanticEntities(),
         location=location or SemanticLocation(),
@@ -266,6 +345,19 @@ def build_interpretation(
 def successful_execution(*sources):
     return ToolExecution(
         content='{"success":true,"data":{}}',
+        sources=tuple(sources),
+        success=True,
+        system_failure=False,
+    )
+
+
+def mapbox_place_execution(longitude, latitude, *sources):
+    return ToolExecution(
+        content=(
+            '{"success":true,"data":{"results":['
+            f'{{"longitude":{longitude},"latitude":{latitude}}}'
+            ']}}'
+        ),
         sources=tuple(sources),
         success=True,
         system_failure=False,

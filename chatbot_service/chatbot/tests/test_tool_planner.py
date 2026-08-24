@@ -81,7 +81,7 @@ class ToolPlannerTests(SimpleTestCase):
                 "types": "poi",
                 "rank_strategy": "relevance",
                 "open_now": True,
-                "minimum_rating": 4.0,
+                "minimum_rating": 0.0,
             },
         )
 
@@ -147,22 +147,29 @@ class ToolPlannerTests(SimpleTestCase):
         self.assertEqual(
             [call.name for call in calls],
             [
-                "mapbox_category_search",
-                "mapbox_category_search",
+                "mapbox_forward_search",
                 "mapbox_category_search",
             ],
         )
         self.assertEqual(
-            [call.arguments["category_id"] for call in calls],
-            ["cafe", "coffee_shop", "restaurant"],
+            calls[0].arguments,
+            {
+                "q": "Đà Nẵng",
+                "language": "vi",
+                "limit": 3,
+                "types": "city,place",
+                "rank_strategy": "relevance",
+                "auto_complete": False,
+            },
         )
-        self.assertTrue(
-            all(call.arguments["near"] == "Đà Nẵng" for call in calls)
-        )
-        self.assertTrue(all(call.arguments["limit"] == 10 for call in calls))
-        self.assertTrue(all(call.arguments["types"] == "poi" for call in calls))
-        self.assertTrue(
-            all(call.arguments["minimum_rating"] == 4.0 for call in calls)
+        self.assertEqual(
+            calls[1].arguments,
+            {
+                "category_id": "tourist_attraction",
+                "language": "vi",
+                "limit": 10,
+                "minimum_rating": 0.0,
+            },
         )
         self.assertFalse(
             any(call.name == "mapbox_list_categories" for call in calls)

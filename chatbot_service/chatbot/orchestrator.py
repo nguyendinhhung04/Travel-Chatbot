@@ -11,7 +11,13 @@ from typing import Any
 from django.conf import settings
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from chatbot.destination_discovery import (
+    DestinationCandidateGenerator,
+    DestinationDiscoveryPipeline,
+)
+from chatbot.intent import TravelIntent
 from chatbot.rag.rag_chain import get_chat_model, normalize_answer
+from chatbot.response_policy import response_policy_for
 from chatbot.semantic import (
     ConversationMessage,
     SemanticInterpretation,
@@ -30,16 +36,15 @@ Backend đã phân tích intent, semantic action và tự thực thi các tool �
 Hãy trả lời dựa trên semantic interpretation, lịch sử hội thoại và tool results được cung cấp.
 
 Quy tắc bắt buộc:
-- Ưu tiên thông tin Knowledge Base khi liên quan; có thể bổ sung kiến thức đáng tin cậy của mô hình khi dữ liệu chưa đủ.
+- Tuân thủ chính sách evidence theo primary_intent được cung cấp trong system message riêng; không tự thay đổi thứ tự ưu tiên nguồn.
 - Dữ liệu địa điểm có thể thay đổi như địa chỉ, tọa độ, giờ mở cửa, điện thoại và website chỉ được lấy từ Mapbox tool result; không tự tạo.
 - Khi hiển thị địa điểm, trình bày từng nơi riêng và kèm fullAddress nếu có. Chỉ hiển thị giờ mở cửa, điện thoại, website hoặc rating khi rawResponse thực sự có giá trị.
 - Không loại bỏ địa điểm chỉ vì Mapbox không cung cấp rating và không tự tạo rating.
-- Chỉ được đề xuất địa điểm có mapboxId xuất hiện trong data.results. rawResponse chỉ dùng để bổ sung metadata cho đúng các địa điểm đó, không dùng để đưa thêm địa điểm đã bị backend loại.
+- rawResponse chỉ dùng để bổ sung metadata cho đúng địa điểm trong data.results, không dùng để đưa thêm địa điểm đã bị backend loại.
 - Nếu status là needs_clarification, chỉ hỏi ngắn gọn thông tin còn thiếu.
 - Nếu status là unsupported, giải thích rõ giới hạn hiện tại; không giả vờ đã chỉ đường, đọc giao thông thời gian thực, lưu lịch trình hay lưu dữ liệu người dùng.
 - Itinerary chỉ là tư vấn dạng văn bản; không tuyên bố đã lưu hoặc tối ưu tuyến đường.
 - Không nhắc tên tool, RAG, chunk, semantic schema hoặc JSON trong câu trả lời.
-- Nếu tool không tìm thấy dữ liệu, nói rõ chưa tìm thấy; không suy đoán.
 - Trả lời tự nhiên, sáng tạo và plain text tiếng Việt; không dùng bảng hoặc Markdown phức tạp.
 """
 
@@ -51,7 +56,13 @@ TOOL_CONTEXT_TEMPLATE = """Kết quả các tool đọc dữ liệu do backend �
 {tool_json}
 """
 
+DESTINATION_DISCOVERY_CONTEXT_TEMPLATE = """Evidence đã được backend đối chiếu cho destination_discovery:
+{evidence_json}
+Chỉ các địa điểm trong matchedCandidates và additionalMapboxPlaces được phép xuất hiện trong danh sách đề xuất cuối.
+"""
+
 NO_TOOL_CONTEXT = """Backend không cần gọi tool cho yêu cầu này. Hãy trả lời theo semantic interpretation và lịch sử hội thoại."""
+
 
 
 class ToolInfrastructureError(RuntimeError):
@@ -74,6 +85,7 @@ class ChatOrchestrator:
         registry: ToolRegistry,
         *,
         semantic_interpreter: SemanticInterpreter | None = None,
+        candidate_generator: DestinationCandidateGenerator | None = None,
         max_tool_calls: int | None = None,
     ) -> None:
         resolved_max_calls = (
@@ -94,6 +106,7 @@ class ChatOrchestrator:
         self._semantic_interpreter = (
             semantic_interpreter or SemanticInterpreter(chat_model)
         )
+        self._candidate_generator = candidate_generator
         self._max_tool_calls = resolved_max_calls
 
     def answer(
@@ -113,8 +126,29 @@ class ChatOrchestrator:
             current_location=current_location,
         )
         self._print_semantic_interpretation(interpretation)
-        planned_calls = plan_tools(interpretation)[: self._max_tool_calls]
-        executions = self._execute_plan(planned_calls)
+        destination_evidence: dict[str, Any] | None = None
+        tool_plan = plan_tools(interpretation)
+        if (
+            interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
+            and tool_plan
+        ):
+            discovery_run = DestinationDiscoveryPipeline(
+                self._chat_model,
+                self._registry,
+                max_tool_calls=self._max_tool_calls,
+                candidate_generator=self._candidate_generator,
+            ).execute(
+                cleaned_question,
+                history=history,
+                interpretation=interpretation,
+                planned_calls=tool_plan,
+            )
+            planned_calls = discovery_run.calls
+            executions = discovery_run.executions
+            destination_evidence = discovery_run.evidence
+        else:
+            planned_calls = list(tool_plan[: self._max_tool_calls])
+            executions = self._execute_plan(planned_calls)
         self._raise_if_all_tools_had_system_failures(executions)
 
         sources = self._collect_unique_sources(executions)
@@ -124,6 +158,7 @@ class ChatOrchestrator:
             interpretation=interpretation,
             planned_calls=planned_calls,
             executions=executions,
+            destination_evidence=destination_evidence,
         )
         response = self._invoke_ai_message(self._chat_model, messages)
         self._print_model_response(response)
@@ -137,10 +172,69 @@ class ChatOrchestrator:
         self,
         calls: Sequence[PlannedToolCall],
     ) -> list[ToolExecution]:
-        return [
-            self._registry.execute(call.name, call.arguments)
-            for call in calls
-        ]
+        executions: list[ToolExecution] = []
+        destination_coordinates: dict[str, tuple[float, float]] = {}
+        for call in calls:
+            arguments = dict(call.arguments)
+            if (
+                call.name == "mapbox_category_search"
+                and call.destination is not None
+                and "proximity" not in arguments
+            ):
+                coordinates = destination_coordinates.get(call.destination)
+                if coordinates is None:
+                    executions.append(
+                        self._unresolved_destination_execution(call.destination)
+                    )
+                    continue
+                longitude, latitude = coordinates
+                arguments.pop("near", None)
+                arguments["proximity"] = f"{longitude},{latitude}"
+
+            execution = self._registry.execute(call.name, arguments)
+            executions.append(execution)
+            if (
+                call.evidence_kind == "destination_location"
+                and call.destination is not None
+            ):
+                coordinates = self._first_result_coordinates(execution)
+                if coordinates is not None:
+                    destination_coordinates[call.destination] = coordinates
+        return executions
+
+    @staticmethod
+    def _first_result_coordinates(
+        execution: ToolExecution,
+    ) -> tuple[float, float] | None:
+        if not execution.success:
+            return None
+        try:
+            payload = json.loads(execution.content)
+            result = payload["data"]["results"][0]
+            longitude = float(result["longitude"])
+            latitude = float(result["latitude"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None
+        return longitude, latitude
+
+    @staticmethod
+    def _unresolved_destination_execution(destination: str) -> ToolExecution:
+        return ToolExecution(
+            content=json.dumps(
+                {
+                    "success": False,
+                    "data": None,
+                    "errorCode": "destination_not_resolved",
+                    "errorMessage": f"Không xác định được tọa độ cho {destination}.",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            sources=(),
+            success=False,
+            system_failure=False,
+            error_code="destination_not_resolved",
+        )
 
     @staticmethod
     def _build_answer_messages(
@@ -150,19 +244,38 @@ class ChatOrchestrator:
         interpretation: SemanticInterpretation,
         planned_calls: Sequence[PlannedToolCall],
         executions: Sequence[ToolExecution],
+        destination_evidence: dict[str, Any] | None = None,
     ) -> list[Any]:
         semantic_content = SEMANTIC_CONTEXT_TEMPLATE.format(
             semantic_json=interpretation.model_dump_json(exclude_none=True),
         )
-        tool_content = ChatOrchestrator._tool_context_content(
-            planned_calls,
-            executions,
+        if destination_evidence is None:
+            tool_content = ChatOrchestrator._tool_context_content(
+                planned_calls,
+                executions,
+            )
+        else:
+            tool_content = DESTINATION_DISCOVERY_CONTEXT_TEMPLATE.format(
+                evidence_json=json.dumps(
+                    destination_evidence,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+        messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
+        response_policy = (
+            response_policy_for(interpretation.primary_intent)
+            if planned_calls or destination_evidence is not None
+            else None
         )
-        messages: list[Any] = [
-            SystemMessage(content=SYSTEM_PROMPT),
-            SystemMessage(content=semantic_content),
-            SystemMessage(content=tool_content),
-        ]
+        if response_policy is not None:
+            messages.append(SystemMessage(content=response_policy))
+        messages.extend(
+            [
+                SystemMessage(content=semantic_content),
+                SystemMessage(content=tool_content),
+            ]
+        )
         for message in history:
             if message.role == "user":
                 messages.append(HumanMessage(content=message.content))
@@ -284,6 +397,7 @@ def orchestrate_chat(
     chat_model: Any | None = None,
     registry: ToolRegistry | None = None,
     semantic_interpreter: SemanticInterpreter | None = None,
+    candidate_generator: DestinationCandidateGenerator | None = None,
     max_tool_calls: int | None = None,
 ) -> ChatOrchestratorResult:
     """Run one stateless request and close owned HTTP resources."""
@@ -293,6 +407,7 @@ def orchestrate_chat(
             active_model,
             registry,
             semantic_interpreter=semantic_interpreter,
+            candidate_generator=candidate_generator,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,
@@ -306,6 +421,7 @@ def orchestrate_chat(
             active_model,
             active_registry,
             semantic_interpreter=semantic_interpreter,
+            candidate_generator=candidate_generator,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,
@@ -317,6 +433,7 @@ def orchestrate_chat(
 __all__ = [
     "ChatOrchestrator",
     "ChatOrchestratorResult",
+    "DESTINATION_DISCOVERY_CONTEXT_TEMPLATE",
     "NO_TOOL_CONTEXT",
     "SEMANTIC_CONTEXT_TEMPLATE",
     "SYSTEM_PROMPT",

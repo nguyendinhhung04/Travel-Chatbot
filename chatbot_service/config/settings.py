@@ -94,7 +94,7 @@ MAPBOX_TOOL_TIMEOUT_SECONDS = get_positive_float_setting(
 )
 CHATBOT_MAX_TOOL_CALLS = get_positive_int_setting(
     'CHATBOT_MAX_TOOL_CALLS',
-    4,
+    8,
 )
 
 # RAG pipeline configuration.
