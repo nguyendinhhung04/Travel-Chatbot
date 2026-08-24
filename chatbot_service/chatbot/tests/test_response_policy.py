@@ -20,6 +20,8 @@ class ResponsePolicyTests(SimpleTestCase):
         self.assertIn("kiến thức ổn định", policy)
         self.assertIn("Mapbox Category Search chỉ để bổ sung", policy)
         self.assertIn("có mapboxId", policy)
+        self.assertIn("một danh sách thống nhất", policy)
+        self.assertIn("Điểm nổi bật", policy)
 
     def test_place_search_and_details_use_mapbox_first(self):
         for intent in (TravelIntent.PLACE_SEARCH, TravelIntent.PLACE_DETAILS):

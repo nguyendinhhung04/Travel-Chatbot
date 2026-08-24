@@ -46,6 +46,10 @@ Quy tắc bắt buộc:
 - Itinerary chỉ là tư vấn dạng văn bản; không tuyên bố đã lưu hoặc tối ưu tuyến đường.
 - Không nhắc tên tool, RAG, chunk, semantic schema hoặc JSON trong câu trả lời.
 - Trả lời tự nhiên, sáng tạo và plain text tiếng Việt; không dùng bảng hoặc Markdown phức tạp.
+- Khi có từ hai địa điểm trở lên, bắt buộc trình bày theo cấu trúc dễ quét: mở đầu tối đa 2 câu; danh sách đánh số; mỗi địa điểm cách nhau một dòng trống; thông tin của mỗi địa điểm nằm trên các dòng riêng.
+- Mẫu cho mỗi địa điểm: dòng đầu là "1. Tên địa điểm"; sau đó lần lượt dùng "Địa chỉ:", "Điểm nổi bật:" và "Liên hệ:" khi dữ liệu tương ứng thực sự có. Có thể thêm một dòng ngắn phù hợp trực tiếp với yêu cầu của người dùng.
+- Bỏ hoàn toàn nhãn không có dữ liệu. Không dồn tên, địa chỉ và mô tả của nhiều địa điểm vào cùng một đoạn văn.
+- Kết thúc bằng tối đa 1 câu gợi ý lựa chọn thực tế nếu hữu ích; tránh câu kết sáo rỗng như chúc chuyến đi đáng nhớ.
 """
 
 SEMANTIC_CONTEXT_TEMPLATE = """Phân tích đã được backend xác thực:

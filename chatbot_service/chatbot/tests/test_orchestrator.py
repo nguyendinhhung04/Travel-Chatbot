@@ -43,6 +43,11 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertIn("unsupported", SYSTEM_PROMPT)
         self.assertIn("không tuyên bố đã lưu", SYSTEM_PROMPT)
         self.assertIn("plain text tiếng Việt", SYSTEM_PROMPT)
+        self.assertIn("danh sách đánh số", SYSTEM_PROMPT)
+        self.assertIn('"Địa chỉ:"', SYSTEM_PROMPT)
+        self.assertIn('"Điểm nổi bật:"', SYSTEM_PROMPT)
+        self.assertIn("Không dồn tên, địa chỉ", SYSTEM_PROMPT)
+        self.assertIn("tránh câu kết sáo rỗng", SYSTEM_PROMPT)
 
     def test_travel_qa_executes_rag_and_sends_validated_semantics_to_model(self):
         interpretation = build_interpretation(
