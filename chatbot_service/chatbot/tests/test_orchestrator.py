@@ -191,7 +191,7 @@ class ChatOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(model.invocations, [])
 
-    def test_terminal_diagnostic_prints_only_model_response(self):
+    def test_terminal_diagnostic_prints_semantics_and_model_response(self):
         interpretation = build_interpretation(
             intent=TravelIntent.GENERAL_CHAT,
             actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
@@ -208,6 +208,9 @@ class ChatOrchestratorTests(SimpleTestCase):
             ).answer("Nội dung người dùng không được in")
 
         output = terminal_output.getvalue()
+        self.assertIn("SemanticInterpretation result:", output)
+        self.assertIn('"primary_intent": "general_chat"', output)
+        self.assertIn('"normalized_query":', output)
         self.assertIn("Gemini response:", output)
         self.assertIn("Xin chào!", output)
         self.assertNotIn("Nội dung người dùng không được in", output)
