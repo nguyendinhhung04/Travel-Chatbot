@@ -37,14 +37,10 @@ MINIMUM_DISTANCE_GAP_METERS = 100.0
 logger = logging.getLogger(__name__)
 _PLACE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceToolData])
 
-CANDIDATE_SYSTEM_PROMPT = """Bạn tạo danh sách ứng viên địa điểm cho intent destination_discovery.
-
-Quy tắc:
-- Ưu tiên địa điểm liên quan trong Knowledge Base, sau đó mới dùng kiến thức ổn định và đáng tin cậy của bạn.
-- Chỉ trả tối đa 5 địa điểm nổi tiếng nằm trong điểm đến đã cho.
-- Chỉ tạo tên, aliases, categoryHints và lý do ngắn gọn.
-- Không tạo địa chỉ, tọa độ, mapboxId, rating, giờ mở cửa, điện thoại hoặc website.
-- Không dùng dữ liệu Mapbox vì giai đoạn đối chiếu Mapbox được backend thực hiện sau.
+CANDIDATE_SYSTEM_PROMPT = """Tạo tối đa 5 ứng viên nổi bật cho điểm đến được cung cấp.
+Ưu tiên Knowledge Base, sau đó mới dùng kiến thức ổn định. Chỉ trả name, aliases,
+categoryHints và reason ngắn gọn. Không tạo dữ liệu Mapbox hoặc thông tin có thể
+thay đổi như địa chỉ, tọa độ, rating, giờ mở cửa, điện thoại và website.
 """
 
 
@@ -250,8 +246,6 @@ class DestinationDiscoveryPipeline:
 
         evidence = self._build_evidence(
             rag_execution=rag_execution,
-            generated_count=len(candidates.candidates),
-            matches=matches,
             matched_data=matched_data,
             category_data=category_data,
             destination_resolved=coordinates is not None,
@@ -455,24 +449,22 @@ class DestinationDiscoveryPipeline:
     def _build_evidence(
         *,
         rag_execution: ToolExecution | None,
-        generated_count: int,
-        matches: Sequence[CandidateMatch],
         matched_data: Sequence[tuple[CandidateMatch, MapboxPlaceToolData]],
         category_data: MapboxPlaceToolData | None,
         destination_resolved: bool,
     ) -> dict[str, Any]:
         matched_places: list[dict[str, Any]] = []
         seen_mapbox_ids: set[str] = set()
-        for match, data in matched_data:
+        for match, _data in matched_data:
             if match.place is None or match.place.mapbox_id in seen_mapbox_ids:
                 continue
             seen_mapbox_ids.add(match.place.mapbox_id)
             matched_places.append(
                 {
-                    "candidate": match.candidate.model_dump(by_alias=True),
-                    "status": match.status.value,
-                    "similarity": match.similarity,
-                    **DestinationDiscoveryPipeline._safe_place(match.place, data),
+                    "name": match.candidate.name,
+                    "categoryHints": match.candidate.category_hints,
+                    "reason": match.candidate.reason,
+                    "poiCategories": match.place.poi_categories,
                 }
             )
 
@@ -486,23 +478,10 @@ class DestinationDiscoveryPipeline:
                     DestinationDiscoveryPipeline._safe_place(place, category_data)
                 )
 
-        rejected_counts = {
-            status.value: sum(match.status == status for match in matches)
-            for status in (
-                CandidateMatchStatus.AMBIGUOUS,
-                CandidateMatchStatus.NOT_FOUND,
-                CandidateMatchStatus.LOOKUP_FAILED,
-            )
-        }
         return {
             "knowledgeBase": DestinationDiscoveryPipeline._successful_payload(
                 rag_execution
             ),
-            "candidateSummary": {
-                "generated": generated_count,
-                "verified": len(matched_places),
-                "rejectedCounts": rejected_counts,
-            },
             "destinationResolved": destination_resolved,
             "matchedCandidates": matched_places,
             "additionalMapboxPlaces": additional_places,

@@ -34,23 +34,14 @@ from chatbot.tools.registry import ToolExecution
 
 class ChatOrchestratorTests(SimpleTestCase):
     def test_system_prompt_preserves_q_and_a_scope_and_place_safety(self):
-        self.assertIn("fullAddress", SYSTEM_PROMPT)
-        self.assertIn("rawResponse", SYSTEM_PROMPT)
-        self.assertNotIn("Chỉ được đề xuất địa điểm có mapboxId", SYSTEM_PROMPT)
-        self.assertIn("chính sách evidence theo primary_intent", SYSTEM_PROMPT)
-        self.assertIn("không tự tạo rating", SYSTEM_PROMPT)
+        self.assertIn("dữ liệu backend", SYSTEM_PROMPT)
+        self.assertIn("Không tự tạo dữ liệu có thể thay đổi", SYSTEM_PROMPT)
+        self.assertIn("rating", SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SYSTEM_PROMPT)
         self.assertIn("unsupported", SYSTEM_PROMPT)
         self.assertIn("không tuyên bố đã lưu", SYSTEM_PROMPT)
-        self.assertIn("plain text tiếng Việt", SYSTEM_PROMPT)
-        self.assertIn('"Địa chỉ:"', SYSTEM_PROMPT)
-        self.assertIn("Không dùng một khuôn cố định", SYSTEM_PROMPT)
-        self.assertIn("phần review và khuyến nghị phải viết thành câu tự nhiên", SYSTEM_PROMPT)
-        self.assertIn('Không lặp các nhãn như "Điểm nổi bật:"', SYSTEM_PROMPT)
-        self.assertIn('"Có nên đi:" cho mọi địa điểm', SYSTEM_PROMPT)
-        self.assertIn("Không đặt giới hạn trả lời ngắn", SYSTEM_PROMPT)
-        self.assertIn("Không dồn tên, địa chỉ", SYSTEM_PROMPT)
-        self.assertIn("tránh câu kết sáo rỗng", SYSTEM_PROMPT)
+        self.assertIn("plain text", SYSTEM_PROMPT)
+        self.assertIn("tránh khuôn lặp", SYSTEM_PROMPT)
 
     def test_travel_qa_executes_rag_and_sends_validated_semantics_to_model(self):
         interpretation = build_interpretation(
@@ -89,9 +80,11 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertEqual(interpreter.calls[0][0], "Huế có gì?")
         messages = model.invocations[0]
         self.assertIsInstance(messages[0], SystemMessage)
-        self.assertEqual(messages[1].content, RAG_FIRST_ADVICE_POLICY)
-        self.assertIn('"primary_intent":"travel_qa"', messages[2].content)
-        self.assertIn('"success":true', messages[3].content)
+        self.assertIn(RAG_FIRST_ADVICE_POLICY.strip(), messages[0].content)
+        self.assertIn('"primary_intent": "travel_qa"', messages[0].content)
+        self.assertIn('"success": true', messages[0].content)
+        self.assertIn("=== PHÂN TÍCH BACKEND ===", messages[0].content)
+        self.assertIn("=== DỮ LIỆU BACKEND ===", messages[0].content)
         self.assertEqual(
             [message.content for message in messages if isinstance(message, HumanMessage)],
             ["Tôi thích lịch sử", "Huế có gì?"],
@@ -143,7 +136,10 @@ class ChatOrchestratorTests(SimpleTestCase):
             self.assertEqual(arguments["minimum_rating"], 0.0)
             self.assertEqual(arguments["proximity"], "105.854041,21.028333")
         self.assertEqual(result.sources, [mapbox_source])
-        self.assertEqual(model.invocations[0][1].content, MAPBOX_FIRST_POLICY)
+        self.assertIn(
+            MAPBOX_FIRST_POLICY.strip(),
+            model.invocations[0][0].content,
+        )
         self.assertFalse(
             any(name == "mapbox_list_categories" for name, _ in registry.calls)
         )
@@ -233,14 +229,13 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertNotIn("near", category_arguments)
         self.assertEqual(result.sources, [mapbox_source])
         messages = model.invocations[0]
-        self.assertEqual(
-            messages[1].content,
-            DESTINATION_DISCOVERY_POLICY,
+        self.assertIn(
+            DESTINATION_DISCOVERY_POLICY.strip(),
+            messages[0].content,
         )
-        self.assertIn("Knowledge Base", messages[1].content)
-        self.assertIn("kiến thức ổn định", messages[1].content)
-        self.assertIn("Mapbox Category Search chỉ để bổ sung", messages[1].content)
-        self.assertIn("có mapboxId", messages[1].content)
+        self.assertIn("Knowledge Base", messages[0].content)
+        self.assertIn("matchedCandidates đã được backend xác minh", messages[0].content)
+        self.assertIn("additionalMapboxPlaces để bổ sung", messages[0].content)
 
     def test_general_chat_and_clarification_do_not_call_tools(self):
         cases = (
@@ -268,7 +263,7 @@ class ChatOrchestratorTests(SimpleTestCase):
                 ).answer("Câu hỏi")
 
                 self.assertEqual(registry.calls, [])
-                self.assertEqual(model.invocations[0][2].content, NO_TOOL_CONTEXT)
+                self.assertIn(NO_TOOL_CONTEXT, model.invocations[0][0].content)
 
     def test_tool_budget_caps_the_backend_plan_before_execution(self):
         interpretation = build_interpretation(
@@ -321,7 +316,7 @@ class ChatOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(model.invocations, [])
 
-    def test_terminal_diagnostic_prints_semantics_and_model_response(self):
+    def test_terminal_diagnostic_prints_final_request_and_model_response(self):
         interpretation = build_interpretation(
             intent=TravelIntent.GENERAL_CHAT,
             actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
@@ -341,9 +336,15 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertIn("SemanticInterpretation result:", output)
         self.assertIn('"primary_intent": "general_chat"', output)
         self.assertIn('"normalized_query":', output)
+        self.assertIn("Gemini request messages:", output)
+        self.assertIn("--- MESSAGE 1: SYSTEM ---", output)
+        self.assertIn("--- MESSAGE 2: HUMAN ---", output)
+        self.assertIn("Bạn là trợ lý tư vấn du lịch tiếng Việt.", output)
+        self.assertIn("Nội dung người dùng không được in", output)
+        self.assertNotIn('"additional_kwargs"', output)
+        self.assertNotIn('"response_metadata"', output)
         self.assertIn("Gemini response:", output)
         self.assertIn("Xin chào!", output)
-        self.assertNotIn("Nội dung người dùng không được in", output)
 
     def test_invalid_max_calls_and_empty_model_answer_are_rejected(self):
         interpretation = build_interpretation(

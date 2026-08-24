@@ -208,8 +208,8 @@ class RAGChainTests(SimpleTestCase):
 
         self.assertIn("Đại Nội nằm ở thành phố Huế.", rendered)
         self.assertIn("Đại Nội ở đâu?", rendered)
-        self.assertIn("Ưu tiên sử dụng thông tin trong Context", rendered)
-        self.assertIn("có thể dùng kiến thức của mình để bổ sung", rendered)
+        self.assertIn("Ưu tiên Context", rendered)
+        self.assertIn("Có thể bổ sung kiến thức ổn định", rendered)
         self.assertIn(INSUFFICIENT_CONTEXT_MESSAGE, rendered)
         self.assertIn("sáng tạo", RAG_PROMPT)
         self.assertNotIn("ngắn gọn", RAG_PROMPT)

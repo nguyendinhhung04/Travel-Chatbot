@@ -166,14 +166,14 @@ class SemanticInterpreterTests(SimpleTestCase):
         self.assertEqual(len(model.structured.invocations), 1)
 
     def test_prompt_keeps_semantic_and_execution_boundaries_explicit(self):
-        self.assertIn("đúng một primary_intent", SEMANTIC_SYSTEM_PROMPT)
-        self.assertIn("Không tạo tên tool", SEMANTIC_SYSTEM_PROMPT)
-        self.assertIn("Mapbox canonicalId", SEMANTIC_SYSTEM_PROMPT)
-        self.assertIn("không lưu và không tính route", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Chọn đúng một primary_intent", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("không tạo tên tool", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("canonicalId", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Lịch trình chỉ là tư vấn văn bản", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("giao thông thời gian thực", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("entities.search_target", SEMANTIC_SYSTEM_PROMPT)
-        self.assertIn("constraints.rank_strategy=distance", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("gần nhất dùng distance", SEMANTIC_SYSTEM_PROMPT)
 
 
 def build_interpretation() -> SemanticInterpretation:

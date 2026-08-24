@@ -18,28 +18,21 @@ class ResponsePolicyTests(SimpleTestCase):
         self.assertEqual(policy, DESTINATION_DISCOVERY_POLICY)
         self.assertIn("Knowledge Base", policy)
         self.assertIn("kiến thức ổn định", policy)
-        self.assertIn("Mapbox Category Search chỉ để bổ sung", policy)
-        self.assertIn("có mapboxId", policy)
-        self.assertIn("một danh sách thống nhất", policy)
-        self.assertIn("Không chỉ chép lại", policy)
-        self.assertIn("Review địa điểm bằng lời văn tự nhiên", policy)
-        self.assertIn("Không bắt mọi địa điểm", policy)
-        self.assertIn('thay vì tạo nhãn "Có nên đi:"', policy)
-        self.assertIn("Giọng văn phải nhiệt tình", policy)
-        self.assertIn("lịch tham khảo", policy)
-        self.assertIn("Không ép nhóm hoặc tạo lịch", policy)
-        self.assertIn("Không tự đoán tên", policy)
+        self.assertIn("additionalMapboxPlaces để bổ sung", policy)
+        self.assertIn("Chỉ đề xuất tên có trong hai danh sách", policy)
+        self.assertIn("name, categoryHints, reason và poiCategories", policy)
+        self.assertIn("không liệt kê máy móc", policy)
+        self.assertIn("không dùng nó để", policy)
 
     def test_place_search_and_details_use_mapbox_first(self):
         for intent in (TravelIntent.PLACE_SEARCH, TravelIntent.PLACE_DETAILS):
             with self.subTest(intent=intent):
                 self.assertEqual(response_policy_for(intent), MAPBOX_FIRST_POLICY)
-        self.assertIn("success=true", MAPBOX_FIRST_POLICY)
-        self.assertIn("data.results rỗng", MAPBOX_FIRST_POLICY)
-        self.assertIn("success=false", MAPBOX_FIRST_POLICY)
+        self.assertIn("request thành công nhưng results rỗng", MAPBOX_FIRST_POLICY)
+        self.assertIn("request\n  thất bại", MAPBOX_FIRST_POLICY)
         self.assertIn("chưa thể lấy dữ liệu", MAPBOX_FIRST_POLICY)
-        self.assertIn("Category Search bằng near", MAPBOX_FIRST_POLICY)
-        self.assertIn("không được nói Mapbox không có", MAPBOX_FIRST_POLICY)
+        self.assertIn("tìm bằng near có kết quả", MAPBOX_FIRST_POLICY)
+        self.assertIn("Không suy đoán địa điểm thay thế", MAPBOX_FIRST_POLICY)
 
     def test_advice_intents_use_rag_first(self):
         intents = (

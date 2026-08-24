@@ -30,44 +30,23 @@ from chatbot.tools.models import ChatSource
 from chatbot.tools.registry import ToolExecution, ToolRegistry
 
 
-SYSTEM_PROMPT = """Bạn là trợ lý hỏi đáp du lịch tiếng Việt.
+SYSTEM_PROMPT = """Bạn là trợ lý tư vấn du lịch tiếng Việt.
 
-Backend đã phân tích intent, semantic action và tự thực thi các tool đọc dữ liệu phù hợp.
-Hãy trả lời dựa trên semantic interpretation, lịch sử hội thoại và tool results được cung cấp.
-
-Quy tắc bắt buộc:
-- Tuân thủ chính sách evidence theo primary_intent được cung cấp trong system message riêng; không tự thay đổi thứ tự ưu tiên nguồn.
-- Dữ liệu địa điểm có thể thay đổi như địa chỉ, tọa độ, giờ mở cửa, điện thoại và website chỉ được lấy từ Mapbox tool result; không tự tạo.
-- Khi hiển thị địa điểm, trình bày từng nơi riêng và kèm fullAddress nếu có. Chỉ hiển thị giờ mở cửa, điện thoại, website hoặc rating khi rawResponse thực sự có giá trị.
-- Không loại bỏ địa điểm chỉ vì Mapbox không cung cấp rating và không tự tạo rating.
-- rawResponse chỉ dùng để bổ sung metadata cho đúng địa điểm trong data.results, không dùng để đưa thêm địa điểm đã bị backend loại.
-- Nếu status là needs_clarification, chỉ hỏi ngắn gọn thông tin còn thiếu.
-- Nếu status là unsupported, giải thích rõ giới hạn hiện tại; không giả vờ đã chỉ đường, đọc giao thông thời gian thực, lưu lịch trình hay lưu dữ liệu người dùng.
-- Itinerary chỉ là tư vấn dạng văn bản; không tuyên bố đã lưu hoặc tối ưu tuyến đường.
-- Không nhắc tên tool, RAG, chunk, semantic schema hoặc JSON trong câu trả lời.
-- Trả lời tự nhiên, sáng tạo và plain text tiếng Việt; không dùng bảng hoặc Markdown phức tạp.
-- Không đặt giới hạn trả lời ngắn. Độ dài phải đủ để phân tích, đưa nhận xét và giúp người dùng ra quyết định; không kéo dài bằng câu sáo rỗng hoặc lặp lại dữ liệu.
-- Không dùng một khuôn cố định cho mọi câu trả lời. Tự chọn cách trình bày theo câu hỏi, số lượng địa điểm và loại trải nghiệm: đoạn tư vấn, danh sách đánh số, gạch đầu dòng hoặc nhóm theo chủ đề/buổi trong ngày.
-- Khi có nhiều địa điểm, vẫn phải dễ quét: tách từng địa điểm hoặc từng nhóm bằng dòng trống. Có thể dùng "Địa chỉ:" và "Liên hệ:" cho dữ liệu thực tế, nhưng phần review và khuyến nghị phải viết thành câu tự nhiên.
-- Không lặp các nhãn như "Điểm nổi bật:", "Đánh giá tư vấn:" hoặc "Có nên đi:" cho mọi địa điểm. Chỉ đưa kết luận trực tiếp khi người dùng hỏi hoặc khi nó thực sự giúp phân biệt lựa chọn; ưu tiên cách nói tự nhiên như "rất đáng ghé nếu..." hoặc "có thể bỏ qua nếu...".
-- Bỏ hoàn toàn nhãn không có dữ liệu. Không dồn tên, địa chỉ và mô tả của nhiều địa điểm vào cùng một đoạn văn.
-- Kết thúc bằng gợi ý lựa chọn, cách kết hợp các điểm hoặc một câu hỏi tiếp nối có ích để cá nhân hóa tư vấn; tránh câu kết sáo rỗng như chúc chuyến đi đáng nhớ.
+Dùng đúng phân tích, chính sách nguồn, dữ liệu backend và lịch sử được cung cấp.
+- Không nhắc tool, RAG, schema hay JSON trong câu trả lời.
+- Không tự tạo dữ liệu có thể thay đổi như địa chỉ, tọa độ, rating, giờ mở cửa,
+  điện thoại, website hoặc giá. Bỏ qua trường không có giá trị; không loại một địa
+  điểm chỉ vì thiếu rating.
+- Với needs_clarification, chỉ hỏi thông tin còn thiếu. Với unsupported, nói rõ
+  giới hạn; không giả vờ đã chỉ đường, đọc giao thông thời gian thực hoặc lưu dữ liệu.
+- Lịch trình chỉ là tư vấn văn bản, không tuyên bố đã lưu hay tối ưu tuyến đường.
+- Trả lời tự nhiên, có nhận định và đủ giúp người dùng quyết định. Dùng plain text,
+  không dùng bảng hoặc Markdown phức tạp.
+- Chọn bố cục phù hợp câu hỏi. Khi có nhiều nơi, tách từng nơi/nhóm bằng dòng trống;
+  tránh khuôn lặp, nhãn thừa, câu sáo rỗng và lặp lại dữ liệu.
 """
 
-SEMANTIC_CONTEXT_TEMPLATE = """Phân tích đã được backend xác thực:
-{semantic_json}
-"""
-
-TOOL_CONTEXT_TEMPLATE = """Kết quả các tool đọc dữ liệu do backend đã chọn:
-{tool_json}
-"""
-
-DESTINATION_DISCOVERY_CONTEXT_TEMPLATE = """Evidence đã được backend đối chiếu cho destination_discovery:
-{evidence_json}
-Chỉ các địa điểm trong matchedCandidates và additionalMapboxPlaces được phép xuất hiện trong danh sách đề xuất cuối.
-"""
-
-NO_TOOL_CONTEXT = """Backend không cần gọi tool cho yêu cầu này. Hãy trả lời theo semantic interpretation và lịch sử hội thoại."""
+NO_TOOL_CONTEXT = "Không có dữ liệu tool cho yêu cầu này."
 
 
 
@@ -231,36 +210,40 @@ class ChatOrchestrator:
         executions: Sequence[ToolExecution],
         destination_evidence: dict[str, Any] | None = None,
     ) -> list[Any]:
-        semantic_content = SEMANTIC_CONTEXT_TEMPLATE.format(
-            semantic_json=interpretation.model_dump_json(exclude_none=True),
-        )
         if destination_evidence is None:
-            tool_content = ChatOrchestrator._tool_context_content(
+            evidence_content = ChatOrchestrator._tool_context_content(
                 planned_calls,
                 executions,
             )
         else:
-            tool_content = DESTINATION_DISCOVERY_CONTEXT_TEMPLATE.format(
-                evidence_json=json.dumps(
-                    destination_evidence,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+            evidence_content = json.dumps(
+                destination_evidence,
+                ensure_ascii=False,
+                indent=2,
             )
-        messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
         response_policy = (
             response_policy_for(interpretation.primary_intent)
             if planned_calls or destination_evidence is not None
             else None
         )
+        prompt_sections = [f"=== HƯỚNG DẪN ===\n{SYSTEM_PROMPT.strip()}"]
         if response_policy is not None:
-            messages.append(SystemMessage(content=response_policy))
-        messages.extend(
-            [
-                SystemMessage(content=semantic_content),
-                SystemMessage(content=tool_content),
-            ]
+            prompt_sections.append(
+                f"=== CHÍNH SÁCH NGUỒN ===\n{response_policy.strip()}"
+            )
+        prompt_sections.extend(
+            (
+                "=== PHÂN TÍCH BACKEND ===\n"
+                + interpretation.model_dump_json(
+                    exclude_none=True,
+                    indent=2,
+                ),
+                f"=== DỮ LIỆU BACKEND ===\n{evidence_content}",
+            )
         )
+        messages: list[Any] = [
+            SystemMessage(content="\n\n".join(prompt_sections))
+        ]
         for message in history:
             if message.role == "user":
                 messages.append(HumanMessage(content=message.content))
@@ -278,28 +261,38 @@ class ChatOrchestrator:
             return NO_TOOL_CONTEXT
         payload = [
             {
-                "request": {
-                    "name": call.name,
-                    "arguments": call.arguments,
-                },
+                "tool": call.name,
                 "result": json.loads(execution.content),
             }
             for call, execution in zip(calls, executions, strict=True)
         ]
-        return TOOL_CONTEXT_TEMPLATE.format(
-            tool_json=json.dumps(
-                payload,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
         )
 
     @staticmethod
     def _invoke_ai_message(model: Any, messages: list[Any]) -> AIMessage:
+        ChatOrchestrator._print_model_request(messages)
         response = model.invoke(messages)
         if not isinstance(response, AIMessage):
             raise RuntimeError("Gemini returned an unsupported response type")
         return response
+
+    @staticmethod
+    def _print_model_request(messages: Sequence[Any]) -> None:
+        """Print message roles and content without LangChain metadata escaping."""
+        sections: list[str] = []
+        for index, message in enumerate(messages, start=1):
+            content = message.content
+            if not isinstance(content, str):
+                content = json.dumps(content, ensure_ascii=False, indent=2)
+            sections.append(
+                f"--- MESSAGE {index}: {message.type.upper()} ---\n{content}"
+            )
+        output = "Gemini request messages:\n" + "\n\n".join(sections) + "\n"
+        ChatOrchestrator._print_terminal(output)
 
     @staticmethod
     def _print_semantic_interpretation(
@@ -312,28 +305,28 @@ class ChatOrchestrator:
             indent=2,
         )
         output = f"SemanticInterpretation result:\n{interpretation_json}\n"
-        stdout_buffer = getattr(sys.stdout, "buffer", None)
-        if stdout_buffer is not None:
-            stdout_buffer.write(output.encode("utf-8"))
-            stdout_buffer.flush()
-            return
-        print(output, end="", flush=True)
+        ChatOrchestrator._print_terminal(output)
 
     @staticmethod
     def _print_model_response(response: AIMessage) -> None:
-        """Print only Gemini's response, never the request or tool payloads."""
-        response_json = json.dumps(
-            response.model_dump(mode="json"),
-            ensure_ascii=False,
-            indent=2,
-        )
-        output = f"Gemini response:\n{response_json}\n"
-        stdout_buffer = getattr(sys.stdout, "buffer", None)
-        if stdout_buffer is not None:
+        """Print Gemini's answer without empty LangChain metadata."""
+        content = response.content
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False, indent=2)
+        output = f"Gemini response:\n--- MESSAGE: AI ---\n{content}\n"
+        ChatOrchestrator._print_terminal(output)
+
+    @staticmethod
+    def _print_terminal(output: str) -> None:
+        """Prefer the terminal text encoding and fall back to UTF-8 bytes."""
+        try:
+            print(output, end="", flush=True)
+        except UnicodeEncodeError:
+            stdout_buffer = getattr(sys.stdout, "buffer", None)
+            if stdout_buffer is None:
+                raise
             stdout_buffer.write(output.encode("utf-8"))
             stdout_buffer.flush()
-            return
-        print(output, end="", flush=True)
 
     @staticmethod
     def _normalized_response_text(response: AIMessage) -> str:
@@ -418,11 +411,8 @@ def orchestrate_chat(
 __all__ = [
     "ChatOrchestrator",
     "ChatOrchestratorResult",
-    "DESTINATION_DISCOVERY_CONTEXT_TEMPLATE",
     "NO_TOOL_CONTEXT",
-    "SEMANTIC_CONTEXT_TEMPLATE",
     "SYSTEM_PROMPT",
-    "TOOL_CONTEXT_TEMPLATE",
     "ToolInfrastructureError",
     "orchestrate_chat",
 ]

@@ -236,11 +236,30 @@ class DestinationDiscoveryPipelineTests(SimpleTestCase):
             registry.calls[-1][1]["category_id"],
             "tourist_attraction",
         )
-        final_context = model.messages[3].content
-        self.assertIn('"mapboxId":"mapbox.lake"', final_context)
-        self.assertIn('"mapboxId":"mapbox.garden"', final_context)
+        final_context = model.messages[0].content
+        evidence = json.loads(
+            final_context.split("=== DỮ LIỆU BACKEND ===\n", 1)[1]
+        )
+        self.assertEqual(
+            evidence["matchedCandidates"],
+            [
+                {
+                    "name": "Hồ Xuân Hương",
+                    "categoryHints": ["lake"],
+                    "reason": "Biểu tượng Đà Lạt",
+                    "poiCategories": ["lake"],
+                }
+            ],
+        )
+        self.assertEqual(
+            set(evidence["matchedCandidates"][0]),
+            {"name", "categoryHints", "reason", "poiCategories"},
+        )
+        self.assertEqual(
+            evidence["additionalMapboxPlaces"][0]["place"]["mapboxId"],
+            "mapbox.garden",
+        )
         self.assertNotIn("Địa điểm không tồn tại", final_context)
-        self.assertEqual(final_context.count('"mapboxId":"mapbox.lake"'), 1)
         verification_log = terminal_output.getvalue()
         self.assertEqual(
             verification_log.count("Destination verification Mapbox request:"),
