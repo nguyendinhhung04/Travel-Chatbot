@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from chatbot.category_resolver import resolve_mapbox_categories
 from chatbot.intent import TravelIntent
 from chatbot.semantic import (
     InterpretationStatus,
@@ -26,7 +27,6 @@ DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT = 10
 DEFAULT_MAPBOX_MINIMUM_RATING = 0.0
 DEFAULT_MAPBOX_RANK_STRATEGY = "relevance"
 DEFAULT_MAX_CATEGORIES = 3
-TOURIST_ATTRACTION_CATEGORY_ID = "tourist_attraction"
 _KILOMETERS_PER_DEGREE = 111.32
 
 _RAG_INTENTS = frozenset(
@@ -159,13 +159,18 @@ def _plan_destination_forward_call(
     destination = _primary_destination(interpretation)
     if destination is None:
         return None
+    destination_types = (
+        "city,place"
+        if interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
+        else "poi,address,city,place"
+    )
     return PlannedToolCall(
         MAPBOX_FORWARD_SEARCH_TOOL_NAME,
         {
             "q": destination,
             "language": "vi",
             "limit": DESTINATION_FORWARD_RESULT_LIMIT,
-            "types": "city,place",
+            "types": destination_types,
             "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
             "auto_complete": False,
         },
@@ -216,7 +221,10 @@ def _plan_category_calls(
     *,
     max_categories: int,
 ) -> list[PlannedToolCall]:
-    categories = (TOURIST_ATTRACTION_CATEGORY_ID,)[:max_categories]
+    categories = resolve_mapbox_categories(
+        interpretation,
+        max_categories=max_categories,
+    )
     common_arguments = _mapbox_location_arguments(interpretation)
     if _needs_destination_lookup(interpretation):
         common_arguments.pop("near", None)
@@ -314,7 +322,6 @@ __all__ = [
     "DEFAULT_MAPBOX_RESULT_LIMIT",
     "DEFAULT_MAX_CATEGORIES",
     "DESTINATION_FORWARD_RESULT_LIMIT",
-    "TOURIST_ATTRACTION_CATEGORY_ID",
     "PlannedToolCall",
     "plan_tools",
 ]

@@ -26,7 +26,10 @@ MAPBOX_FIRST_POLICY = """Chính sách evidence cho nhóm tìm kiếm và thông 
 - Mapbox là nguồn chính để xác định địa điểm và các dữ liệu có thể thay đổi.
 - Chỉ đề xuất địa điểm có mapboxId trong data.results phù hợp với yêu cầu; không thêm địa điểm khác bằng kiến thức riêng của mô hình.
 - Knowledge Base chỉ bổ sung bối cảnh ổn định khi liên quan và không được mâu thuẫn với dữ liệu địa điểm từ Mapbox.
-- Nếu Mapbox trả empty hoặc failed, nói rõ chưa tìm thấy hoặc chưa thể lấy dữ liệu; không suy đoán địa điểm thay thế.
+- Chỉ nói "chưa tìm thấy địa điểm" khi các truy vấn Mapbox liên quan đã thành công (success=true) nhưng data.results rỗng.
+- Nếu Mapbox failed (success=false) và không có kết quả thành công khác, phải nói "chưa thể lấy dữ liệu" và có thể diễn giải errorMessage ngắn gọn; không được nói Mapbox không có địa điểm.
+- Nếu bước xác định tọa độ anchor không có kết quả nhưng Category Search bằng near trả về địa điểm, dùng các địa điểm đó và không tuyên bố tìm kiếm thất bại.
+- Không suy đoán địa điểm thay thế.
 """
 
 RAG_FIRST_ADVICE_POLICY = """Chính sách evidence cho nhóm hỏi đáp và tư vấn du lịch:

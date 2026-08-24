@@ -149,6 +149,8 @@ class ToolPlannerTests(SimpleTestCase):
             [
                 "mapbox_forward_search",
                 "mapbox_category_search",
+                "mapbox_category_search",
+                "mapbox_category_search",
             ],
         )
         self.assertEqual(
@@ -157,22 +159,46 @@ class ToolPlannerTests(SimpleTestCase):
                 "q": "Đà Nẵng",
                 "language": "vi",
                 "limit": 3,
-                "types": "city,place",
+                "types": "poi,address,city,place",
                 "rank_strategy": "relevance",
                 "auto_complete": False,
             },
         )
         self.assertEqual(
-            calls[1].arguments,
-            {
-                "category_id": "tourist_attraction",
-                "language": "vi",
-                "limit": 10,
-                "minimum_rating": 0.0,
-            },
+            [call.arguments["category_id"] for call in calls[1:]],
+            ["cafe", "coffee_shop", "restaurant"],
         )
+        for call in calls[1:]:
+            self.assertEqual(call.arguments["language"], "vi")
+            self.assertEqual(call.arguments["limit"], 10)
+            self.assertEqual(call.arguments["minimum_rating"], 0.0)
         self.assertFalse(
             any(call.name == "mapbox_list_categories" for call in calls)
+        )
+
+    def test_cafe_near_named_poi_resolves_anchor_and_cafe_categories(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_SEARCH,
+            actions=[SemanticActionType.DISCOVER_PLACES],
+            domains=[TravelDomain.FOOD],
+            entities=SemanticEntities(
+                destinations=["FPT Phạm Văn Bạch"],
+                place_types=["quán cafe"],
+            ),
+            location=SemanticLocation(near="FPT Phạm Văn Bạch"),
+        )
+
+        calls = plan_tools(interpretation)
+
+        self.assertEqual(calls[0].name, "mapbox_forward_search")
+        self.assertEqual(calls[0].arguments["q"], "FPT Phạm Văn Bạch")
+        self.assertEqual(calls[0].arguments["types"], "poi,address,city,place")
+        self.assertEqual(
+            [call.arguments["category_id"] for call in calls[1:]],
+            ["cafe", "coffee_shop", "restaurant"],
+        )
+        self.assertTrue(
+            all(call.destination == "FPT Phạm Văn Bạch" for call in calls[1:])
         )
 
     def test_current_coordinates_are_forwarded_without_route_arguments(self):

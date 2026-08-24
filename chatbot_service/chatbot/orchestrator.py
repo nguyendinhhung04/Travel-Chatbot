@@ -189,13 +189,11 @@ class ChatOrchestrator:
             ):
                 coordinates = destination_coordinates.get(call.destination)
                 if coordinates is None:
-                    executions.append(
-                        self._unresolved_destination_execution(call.destination)
-                    )
-                    continue
-                longitude, latitude = coordinates
-                arguments.pop("near", None)
-                arguments["proximity"] = f"{longitude},{latitude}"
+                    arguments["near"] = call.destination
+                else:
+                    longitude, latitude = coordinates
+                    arguments.pop("near", None)
+                    arguments["proximity"] = f"{longitude},{latitude}"
 
             execution = self._registry.execute(call.name, arguments)
             executions.append(execution)
@@ -222,25 +220,6 @@ class ChatOrchestrator:
         except (KeyError, IndexError, TypeError, ValueError):
             return None
         return longitude, latitude
-
-    @staticmethod
-    def _unresolved_destination_execution(destination: str) -> ToolExecution:
-        return ToolExecution(
-            content=json.dumps(
-                {
-                    "success": False,
-                    "data": None,
-                    "errorCode": "destination_not_resolved",
-                    "errorMessage": f"Không xác định được tọa độ cho {destination}.",
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            sources=(),
-            success=False,
-            system_failure=False,
-            error_code="destination_not_resolved",
-        )
 
     @staticmethod
     def _build_answer_messages(

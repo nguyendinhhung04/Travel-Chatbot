@@ -34,6 +34,12 @@ class ResponsePolicyTests(SimpleTestCase):
         for intent in (TravelIntent.PLACE_SEARCH, TravelIntent.PLACE_DETAILS):
             with self.subTest(intent=intent):
                 self.assertEqual(response_policy_for(intent), MAPBOX_FIRST_POLICY)
+        self.assertIn("success=true", MAPBOX_FIRST_POLICY)
+        self.assertIn("data.results rỗng", MAPBOX_FIRST_POLICY)
+        self.assertIn("success=false", MAPBOX_FIRST_POLICY)
+        self.assertIn("chưa thể lấy dữ liệu", MAPBOX_FIRST_POLICY)
+        self.assertIn("Category Search bằng near", MAPBOX_FIRST_POLICY)
+        self.assertIn("không được nói Mapbox không có", MAPBOX_FIRST_POLICY)
 
     def test_advice_intents_use_rag_first(self):
         intents = (

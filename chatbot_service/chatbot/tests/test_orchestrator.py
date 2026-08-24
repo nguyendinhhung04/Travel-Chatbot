@@ -126,23 +126,67 @@ class ChatOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(
             [name for name, _ in registry.calls],
-            ["mapbox_forward_search", "mapbox_category_search"],
+            [
+                "mapbox_forward_search",
+                "mapbox_category_search",
+                "mapbox_category_search",
+                "mapbox_category_search",
+            ],
         )
         self.assertEqual(
-            registry.calls[1][1],
-            {
-                "category_id": "tourist_attraction",
-                "language": "vi",
-                "limit": 10,
-                "minimum_rating": 0.0,
-                "proximity": "105.854041,21.028333",
-            },
+            [arguments["category_id"] for _, arguments in registry.calls[1:]],
+            ["nightlife", "bar", "music_venue"],
         )
+        for _, arguments in registry.calls[1:]:
+            self.assertEqual(arguments["language"], "vi")
+            self.assertEqual(arguments["limit"], 10)
+            self.assertEqual(arguments["minimum_rating"], 0.0)
+            self.assertEqual(arguments["proximity"], "105.854041,21.028333")
         self.assertEqual(result.sources, [mapbox_source])
         self.assertEqual(model.invocations[0][1].content, MAPBOX_FIRST_POLICY)
         self.assertFalse(
             any(name == "mapbox_list_categories" for name, _ in registry.calls)
         )
+
+    def test_place_discovery_falls_back_to_near_when_anchor_has_no_coordinates(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_SEARCH,
+            actions=[SemanticActionType.DISCOVER_PLACES],
+            domains=[TravelDomain.FOOD],
+            entities=SemanticEntities(
+                destinations=["FPT Phạm Văn Bạch"],
+                place_types=["quán cafe"],
+            ),
+            location=SemanticLocation(near="FPT Phạm Văn Bạch"),
+        )
+        registry = StubRegistry(
+            {
+                "mapbox_forward_search": ToolExecution(
+                    content='{"success":true,"data":{"results":[]}}',
+                    sources=(),
+                    success=True,
+                    system_failure=False,
+                ),
+            },
+            default_execution=successful_execution(),
+        )
+        model = StubChatModel([AIMessage(content="Đã tìm thấy quán cafe.")])
+
+        ChatOrchestrator(
+            model,
+            registry,
+            semantic_interpreter=StubInterpreter(interpretation),
+            max_tool_calls=4,
+        ).answer("Cafe quanh FPT Phạm Văn Bạch")
+
+        self.assertEqual(registry.calls[0][0], "mapbox_forward_search")
+        self.assertEqual(
+            [arguments["category_id"] for _, arguments in registry.calls[1:]],
+            ["cafe", "coffee_shop", "restaurant"],
+        )
+        for _, arguments in registry.calls[1:]:
+            self.assertEqual(arguments["near"], "FPT Phạm Văn Bạch")
+            self.assertNotIn("proximity", arguments)
 
     def test_dalat_discovery_resolves_coordinates_then_searches_one_category(self):
         interpretation = build_interpretation(
