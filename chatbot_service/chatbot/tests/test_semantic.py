@@ -1,6 +1,8 @@
 """Tests for structured semantic interpretation."""
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 
 from django.test import SimpleTestCase
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -124,11 +126,13 @@ class SemanticInterpreterTests(SimpleTestCase):
         ]
         location = SemanticLocation(longitude=108.2, latitude=16.05)
 
-        result = SemanticInterpreter(model).interpret(
-            "  Quán thứ hai trông ổn đấy  ",
-            history=history,
-            current_location=location,
-        )
+        terminal_output = StringIO()
+        with redirect_stdout(terminal_output):
+            result = SemanticInterpreter(model).interpret(
+                "  Quán thứ hai trông ổn đấy  ",
+                history=history,
+                current_location=location,
+            )
 
         self.assertIsInstance(result, SemanticInterpretation)
         self.assertIs(model.schema, SemanticInterpretation)
@@ -142,6 +146,12 @@ class SemanticInterpreterTests(SimpleTestCase):
         self.assertEqual(payload["question"], "Quán thứ hai trông ổn đấy")
         self.assertEqual(payload["history"][0]["role"], "user")
         self.assertEqual(payload["current_location"]["longitude"], 108.2)
+        output = terminal_output.getvalue()
+        self.assertIn("Gemini request data:", output)
+        self.assertIn('"stage": "semantic_interpretation"', output)
+        self.assertIn("Quán thứ hai trông ổn đấy", output)
+        self.assertIn('"responseSchema"', output)
+        self.assertIn('"primary_intent"', output)
 
     def test_interpreter_rejects_empty_questions_and_excessive_history(self):
         model = StubChatModel(build_interpretation())

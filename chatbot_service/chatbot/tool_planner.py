@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from chatbot.category_resolver import resolve_mapbox_categories
 from chatbot.intent import TravelIntent
 from chatbot.semantic import (
     InterpretationStatus,
@@ -22,12 +21,32 @@ from chatbot.tools.rag_tool import SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME
 
 
 DEFAULT_MAPBOX_RESULT_LIMIT = 5
+ENRICHMENT_FORWARD_RESULT_LIMIT = 3
 DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT = 10
-DEFAULT_MAPBOX_MINIMUM_RATING = 4.0
+DEFAULT_MAPBOX_MINIMUM_RATING = 0.0
 DEFAULT_MAPBOX_RANK_STRATEGY = "relevance"
 DEFAULT_MAX_CATEGORIES = 3
-MAPBOX_POI_TYPE = "poi"
+MAX_ENRICHMENT_DESTINATIONS = 3
+ENRICHMENT_CORE_CATEGORIES = (
+    "tourist_attraction",
+)
 _KILOMETERS_PER_DEGREE = 111.32
+
+_BROAD_ENRICHMENT_INTENTS = frozenset(
+    {
+        TravelIntent.DESTINATION_DISCOVERY,
+        TravelIntent.TRAVEL_QA,
+        TravelIntent.ITINERARY_ADVICE,
+        TravelIntent.BUDGET_QA,
+    }
+)
+_BROAD_ENRICHMENT_ACTIONS = frozenset(
+    {
+        SemanticActionType.ANSWER_TRAVEL_QUESTION,
+        SemanticActionType.PROVIDE_ITINERARY_ADVICE,
+        SemanticActionType.PROVIDE_BUDGET_ADVICE,
+    }
+)
 
 _RAG_INTENTS = frozenset(
     {
@@ -55,6 +74,9 @@ class PlannedToolCall:
 
     name: str
     arguments: dict[str, Any]
+    destination: str | None = None
+    evidence_kind: str | None = None
+    category_id: str | None = None
 
 
 def plan_tools(
@@ -73,7 +95,19 @@ def plan_tools(
         return ()
 
     action_types = {action.type for action in interpretation.actions}
+    if _needs_broad_enrichment(interpretation, action_types):
+        return _deduplicate_calls(_plan_broad_enrichment(interpretation))
+
     calls: list[PlannedToolCall] = []
+
+    if SemanticActionType.FIND_NAMED_PLACE in action_types:
+        calls.extend(_plan_named_place_calls(interpretation))
+
+    if (
+        SemanticActionType.DISCOVER_PLACES in action_types
+        and _needs_destination_lookup(interpretation)
+    ):
+        calls.extend(_plan_destination_forward_calls(interpretation))
 
     if (
         interpretation.primary_intent in _RAG_INTENTS
@@ -83,11 +117,10 @@ def plan_tools(
             PlannedToolCall(
                 SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
                 {"query": interpretation.normalized_query},
+                destination=_primary_destination(interpretation),
+                evidence_kind="knowledge",
             )
         )
-
-    if SemanticActionType.FIND_NAMED_PLACE in action_types:
-        calls.extend(_plan_named_place_calls(interpretation))
 
     if SemanticActionType.DISCOVER_PLACES in action_types:
         calls.extend(
@@ -103,6 +136,43 @@ def plan_tools(
             calls.append(reverse_call)
 
     return _deduplicate_calls(calls)
+
+
+def _needs_destination_lookup(
+    interpretation: SemanticInterpretation,
+) -> bool:
+    return (
+        interpretation.location.longitude is None
+        and interpretation.location.latitude is None
+        and bool(
+            interpretation.location.near
+            or interpretation.entities.destinations
+        )
+    )
+
+
+def _plan_destination_forward_calls(
+    interpretation: SemanticInterpretation,
+) -> list[PlannedToolCall]:
+    destinations = interpretation.entities.destinations
+    if not destinations and interpretation.location.near:
+        destinations = [interpretation.location.near]
+    return [
+        PlannedToolCall(
+            MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+            {
+                "q": destination,
+                "language": "vi",
+                "limit": ENRICHMENT_FORWARD_RESULT_LIMIT,
+                "types": "city,place",
+                "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
+                "auto_complete": False,
+            },
+            destination=destination,
+            evidence_kind="location",
+        )
+        for destination in destinations[:MAX_ENRICHMENT_DESTINATIONS]
+    ]
 
 
 def _plan_named_place_calls(
@@ -137,6 +207,8 @@ def _plan_named_place_calls(
                 "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
                 **common_arguments,
             },
+            destination=_primary_destination(interpretation) or query,
+            evidence_kind="location",
         )
         for query in queries
     ]
@@ -147,11 +219,10 @@ def _plan_category_calls(
     *,
     max_categories: int,
 ) -> list[PlannedToolCall]:
-    categories = resolve_mapbox_categories(
-        interpretation,
-        max_categories=max_categories,
-    )
+    categories = ENRICHMENT_CORE_CATEGORIES[:max_categories]
     common_arguments = _mapbox_location_arguments(interpretation)
+    if _needs_destination_lookup(interpretation):
+        common_arguments.pop("near", None)
     constraints = interpretation.constraints
     minimum_rating = (
         constraints.minimum_rating
@@ -165,10 +236,12 @@ def _plan_category_calls(
                 "category_id": category,
                 "language": "vi",
                 "limit": DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT,
-                "types": MAPBOX_POI_TYPE,
                 "minimum_rating": minimum_rating,
                 **common_arguments,
             },
+            destination=_primary_destination(interpretation),
+            evidence_kind="poi",
+            category_id=category,
         )
         for category in categories
     ]
@@ -198,7 +271,80 @@ def _plan_reverse_call(
             "language": "vi",
             "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
         },
+        destination=_primary_destination(interpretation),
+        evidence_kind="location",
     )
+
+
+def _needs_broad_enrichment(
+    interpretation: SemanticInterpretation,
+    action_types: set[SemanticActionType],
+) -> bool:
+    if not interpretation.entities.destinations:
+        return False
+    if interpretation.primary_intent in _BROAD_ENRICHMENT_INTENTS:
+        return True
+    return (
+        interpretation.primary_intent == TravelIntent.CONTEXT_FOLLOW_UP
+        and bool(action_types.intersection(_BROAD_ENRICHMENT_ACTIONS))
+    )
+
+
+def _plan_broad_enrichment(
+    interpretation: SemanticInterpretation,
+) -> list[PlannedToolCall]:
+    categories = ENRICHMENT_CORE_CATEGORIES
+
+    minimum_rating = (
+        interpretation.constraints.minimum_rating
+        if interpretation.constraints.minimum_rating is not None
+        else DEFAULT_MAPBOX_MINIMUM_RATING
+    )
+    calls: list[PlannedToolCall] = []
+    destinations = interpretation.entities.destinations[
+        :MAX_ENRICHMENT_DESTINATIONS
+    ]
+    calls.extend(_plan_destination_forward_calls(interpretation))
+    for destination in destinations:
+        calls.append(
+            PlannedToolCall(
+                SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
+                {"query": f"{destination}: {interpretation.normalized_query}"},
+                destination=destination,
+                evidence_kind="knowledge",
+            )
+        )
+        for category in categories:
+            calls.append(
+                PlannedToolCall(
+                    MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
+                    {
+                        "category_id": category,
+                        "language": "vi",
+                        "limit": DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT,
+                        "minimum_rating": minimum_rating,
+                    },
+                    destination=destination,
+                    evidence_kind="poi",
+                    category_id=category,
+                )
+            )
+    return calls
+
+
+def _primary_destination(
+    interpretation: SemanticInterpretation,
+) -> str | None:
+    if interpretation.location.near:
+        return interpretation.location.near
+    if interpretation.entities.destinations:
+        return interpretation.entities.destinations[0]
+    if (
+        interpretation.location.longitude is not None
+        and interpretation.location.latitude is not None
+    ):
+        return "Vị trí hiện tại"
+    return None
 
 
 def _mapbox_location_arguments(
@@ -225,10 +371,14 @@ def _deduplicate_calls(
     calls: list[PlannedToolCall],
 ) -> tuple[PlannedToolCall, ...]:
     unique_calls: list[PlannedToolCall] = []
-    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+    seen: set[
+        tuple[str, str | None, str | None, tuple[tuple[str, str], ...]]
+    ] = set()
     for call in calls:
         key = (
             call.name,
+            call.destination,
+            call.category_id,
             tuple(sorted((name, repr(value)) for name, value in call.arguments.items())),
         )
         if key in seen:
@@ -240,11 +390,13 @@ def _deduplicate_calls(
 
 __all__ = [
     "DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT",
+    "ENRICHMENT_CORE_CATEGORIES",
+    "ENRICHMENT_FORWARD_RESULT_LIMIT",
     "DEFAULT_MAPBOX_MINIMUM_RATING",
     "DEFAULT_MAPBOX_RANK_STRATEGY",
     "DEFAULT_MAPBOX_RESULT_LIMIT",
     "DEFAULT_MAX_CATEGORIES",
-    "MAPBOX_POI_TYPE",
+    "MAX_ENRICHMENT_DESTINATIONS",
     "PlannedToolCall",
     "plan_tools",
 ]

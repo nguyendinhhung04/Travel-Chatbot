@@ -18,7 +18,7 @@ GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 GEMINI_CHAT_MODEL=gemini-3.5-flash-lite
 MAPBOX_TOOL_BASE_URL=http://localhost:5257
 MAPBOX_TOOL_TIMEOUT_SECONDS=12
-CHATBOT_MAX_TOOL_CALLS=4
+CHATBOT_MAX_TOOL_CALLS=18
 ```
 
 ## Kiem Tra
@@ -116,6 +116,10 @@ Moi request duoc xu ly theo thu tu:
 2. Backend `ToolPlanner` chon tool tu intent va semantic action.
 3. `CategoryResolver` anh xa travel domain sang canonical Mapbox category trong whitelist.
 4. Backend thuc thi tool doc du lieu va dua ket qua cho Gemini tong hop cau tra loi.
+
+Voi yeu cau Category Search co dia danh, backend chay Forward Search truoc de lay
+toa do cua tung destination. Cac Category Search sau do dung
+`proximity=longitude,latitude`; `near` khong duoc gui xuong Mapbox Category API.
 
 Bo runtime tool gom:
 

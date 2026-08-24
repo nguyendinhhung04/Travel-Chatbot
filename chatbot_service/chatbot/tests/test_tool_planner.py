@@ -52,10 +52,10 @@ class ToolPlannerTests(SimpleTestCase):
 
         self.assertEqual(
             [call.name for call in calls],
-            ["search_travel_knowledge", "mapbox_forward_search"],
+            ["mapbox_forward_search", "search_travel_knowledge"],
         )
         self.assertEqual(
-            calls[1].arguments,
+            calls[0].arguments,
             {
                 "q": "Bà Nà Hills",
                 "language": "vi",
@@ -64,7 +64,7 @@ class ToolPlannerTests(SimpleTestCase):
                 "types": "poi",
                 "rank_strategy": "relevance",
                 "open_now": True,
-                "minimum_rating": 4.0,
+                "minimum_rating": 0.0,
             },
         )
 
@@ -130,26 +130,128 @@ class ToolPlannerTests(SimpleTestCase):
         self.assertEqual(
             [call.name for call in calls],
             [
-                "mapbox_category_search",
-                "mapbox_category_search",
+                "mapbox_forward_search",
                 "mapbox_category_search",
             ],
         )
         self.assertEqual(
-            [call.arguments["category_id"] for call in calls],
-            ["cafe", "coffee_shop", "restaurant"],
+            [call.arguments["category_id"] for call in calls[1:]],
+            ["tourist_attraction"],
         )
         self.assertTrue(
-            all(call.arguments["near"] == "Đà Nẵng" for call in calls)
+            all(call.destination == "Đà Nẵng" for call in calls[1:])
         )
-        self.assertTrue(all(call.arguments["limit"] == 10 for call in calls))
-        self.assertTrue(all(call.arguments["types"] == "poi" for call in calls))
         self.assertTrue(
-            all(call.arguments["minimum_rating"] == 4.0 for call in calls)
+            all("near" not in call.arguments for call in calls[1:])
+        )
+        self.assertTrue(all(call.arguments["limit"] == 10 for call in calls[1:]))
+        self.assertTrue(all("types" not in call.arguments for call in calls[1:]))
+        self.assertTrue(
+            all(call.arguments["minimum_rating"] == 0.0 for call in calls[1:])
         )
         self.assertFalse(
             any(call.name == "mapbox_list_categories" for call in calls)
         )
+
+    def test_broad_question_enriches_each_destination_independently(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.DESTINATION_DISCOVERY,
+            actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
+            domains=[TravelDomain.FOOD],
+            entities=SemanticEntities(
+                destinations=["Hà Nội", "Đà Lạt"],
+                place_types=["quán cafe"],
+            ),
+        )
+
+        calls = plan_tools(interpretation)
+
+        rag_calls = [call for call in calls if call.evidence_kind == "knowledge"]
+        forward_calls = [call for call in calls if call.evidence_kind == "location"]
+        category_calls = [call for call in calls if call.evidence_kind == "poi"]
+        self.assertEqual(
+            [call.arguments["query"] for call in rag_calls],
+            [
+                "Hà Nội: Tháng 9 đi Đà Lạt có ổn không?",
+                "Đà Lạt: Tháng 9 đi Đà Lạt có ổn không?",
+            ],
+        )
+        self.assertEqual(
+            [call.arguments["q"] for call in forward_calls],
+            ["Hà Nội", "Đà Lạt"],
+        )
+        self.assertTrue(
+            all(call.arguments["types"] == "city,place" for call in forward_calls)
+        )
+        self.assertEqual(len(category_calls), 2)
+        da_lat_categories = [
+            call for call in category_calls if call.destination == "Đà Lạt"
+        ]
+        self.assertEqual(
+            [call.arguments["category_id"] for call in da_lat_categories],
+            ["tourist_attraction"],
+        )
+        self.assertTrue(
+            all(call.destination == "Đà Lạt" for call in da_lat_categories)
+        )
+        self.assertTrue(
+            all("near" not in call.arguments for call in da_lat_categories)
+        )
+        self.assertTrue(
+            all("types" not in call.arguments for call in category_calls)
+        )
+
+    def test_broad_enrichment_caps_destinations_at_three(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.TRAVEL_QA,
+            actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
+            domains=[TravelDomain.FOOD],
+            entities=SemanticEntities(
+                destinations=["Hà Nội", "Đà Lạt", "Huế", "Đà Nẵng"],
+                place_types=["quán cafe"],
+            ),
+        )
+
+        calls = plan_tools(interpretation)
+
+        self.assertEqual(
+            {call.destination for call in calls},
+            {"Hà Nội", "Đà Lạt", "Huế"},
+        )
+        self.assertEqual(len(calls), 9)
+
+    def test_semantic_follow_up_uses_the_same_destination_enrichment(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.CONTEXT_FOLLOW_UP,
+            actions=[SemanticActionType.PROVIDE_BUDGET_ADVICE],
+            entities=SemanticEntities(destinations=["Đà Lạt"]),
+        )
+
+        calls = plan_tools(interpretation)
+
+        self.assertEqual(
+            calls[0].arguments["q"],
+            "Đà Lạt",
+        )
+        self.assertEqual(
+            calls[1].arguments["query"],
+            "Đà Lạt: Tháng 9 đi Đà Lạt có ổn không?",
+        )
+        self.assertEqual(
+            [call.category_id for call in calls[2:]],
+            ["tourist_attraction"],
+        )
+
+    def test_transportation_question_does_not_add_broad_categories(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.TRANSPORTATION_QA,
+            actions=[SemanticActionType.PROVIDE_TRANSPORTATION_ADVICE],
+            entities=SemanticEntities(destinations=["Hà Nội", "Đà Lạt"]),
+        )
+
+        calls = plan_tools(interpretation)
+
+        self.assertEqual([call.name for call in calls], ["search_travel_knowledge"])
 
     def test_current_coordinates_are_forwarded_without_route_arguments(self):
         interpretation = build_interpretation(

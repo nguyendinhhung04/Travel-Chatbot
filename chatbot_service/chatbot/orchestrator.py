@@ -11,6 +11,8 @@ from typing import Any
 from django.conf import settings
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from chatbot.evidence_context import build_evidence_context
+from chatbot.gemini_diagnostics import print_gemini_request
 from chatbot.rag.rag_chain import get_chat_model, normalize_answer
 from chatbot.semantic import (
     ConversationMessage,
@@ -21,7 +23,12 @@ from chatbot.semantic import (
 from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
 from chatbot.tools.models import ChatSource
-from chatbot.tools.registry import ToolExecution, ToolRegistry
+from chatbot.tools.registry import (
+    MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
+    MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+    ToolExecution,
+    ToolRegistry,
+)
 
 
 SYSTEM_PROMPT = """Bạn là trợ lý hỏi đáp du lịch tiếng Việt.
@@ -30,16 +37,15 @@ Backend đã phân tích intent, semantic action và tự thực thi các tool �
 Hãy trả lời dựa trên semantic interpretation, lịch sử hội thoại và tool results được cung cấp.
 
 Quy tắc bắt buộc:
-- Ưu tiên thông tin Knowledge Base khi liên quan; có thể bổ sung kiến thức đáng tin cậy của mô hình khi dữ liệu chưa đủ.
-- Dữ liệu địa điểm có thể thay đổi như địa chỉ, tọa độ, giờ mở cửa, điện thoại và website chỉ được lấy từ Mapbox tool result; không tự tạo.
-- Khi hiển thị địa điểm, trình bày từng nơi riêng và kèm fullAddress nếu có. Chỉ hiển thị giờ mở cửa, điện thoại, website hoặc rating khi rawResponse thực sự có giá trị.
+- Dữ liệu địa điểm có thể thay đổi như địa chỉ, tọa độ, rating, giờ mở cửa, điện thoại và website chỉ được lấy từ evidence context; không tự tạo.
+- Khi hiển thị địa điểm, trình bày từng nơi riêng và kèm fullAddress nếu có. Chỉ hiển thị rating, giờ mở cửa, điện thoại hoặc website khi field tương ứng thực sự có giá trị.
 - Không loại bỏ địa điểm chỉ vì Mapbox không cung cấp rating và không tự tạo rating.
-- Chỉ được đề xuất địa điểm có mapboxId xuất hiện trong data.results. rawResponse chỉ dùng để bổ sung metadata cho đúng các địa điểm đó, không dùng để đưa thêm địa điểm đã bị backend loại.
+- Chỉ được đề xuất địa điểm có mapboxId xuất hiện trong evidence context đã được backend tinh chỉnh.
+- Phân biệt status available, empty và failed: empty là không tìm thấy dữ liệu, failed là provider gặp lỗi. Vẫn dùng evidence còn lại khi một nhóm bị lỗi.
 - Nếu status là needs_clarification, chỉ hỏi ngắn gọn thông tin còn thiếu.
 - Nếu status là unsupported, giải thích rõ giới hạn hiện tại; không giả vờ đã chỉ đường, đọc giao thông thời gian thực, lưu lịch trình hay lưu dữ liệu người dùng.
 - Itinerary chỉ là tư vấn dạng văn bản; không tuyên bố đã lưu hoặc tối ưu tuyến đường.
 - Không nhắc tên tool, RAG, chunk, semantic schema hoặc JSON trong câu trả lời.
-- Nếu tool không tìm thấy dữ liệu, nói rõ chưa tìm thấy; không suy đoán.
 - Trả lời tự nhiên, sáng tạo và plain text tiếng Việt; không dùng bảng hoặc Markdown phức tạp.
 """
 
@@ -47,7 +53,7 @@ SEMANTIC_CONTEXT_TEMPLATE = """Phân tích đã được backend xác thực:
 {semantic_json}
 """
 
-TOOL_CONTEXT_TEMPLATE = """Kết quả các tool đọc dữ liệu do backend đã chọn:
+TOOL_CONTEXT_TEMPLATE = """Evidence context đã được backend nhóm và tinh chỉnh:
 {tool_json}
 """
 
@@ -137,10 +143,103 @@ class ChatOrchestrator:
         self,
         calls: Sequence[PlannedToolCall],
     ) -> list[ToolExecution]:
-        return [
-            self._registry.execute(call.name, call.arguments)
-            for call in calls
-        ]
+        executions: list[ToolExecution] = []
+        coordinates: dict[str, tuple[float, float]] = {}
+        destination_lookups: dict[str, ToolExecution] = {}
+
+        for call in calls:
+            arguments = dict(call.arguments)
+            if (
+                call.name == MAPBOX_CATEGORY_SEARCH_TOOL_NAME
+                and "proximity" not in arguments
+                and call.destination is not None
+            ):
+                destination_coordinates = coordinates.get(call.destination)
+                if destination_coordinates is None:
+                    executions.append(
+                        self._category_without_coordinates(
+                            destination_lookups.get(call.destination)
+                        )
+                    )
+                    continue
+                longitude, latitude = destination_coordinates
+                arguments.pop("near", None)
+                arguments["proximity"] = f"{longitude},{latitude}"
+
+            execution = self._registry.execute(call.name, arguments)
+            executions.append(execution)
+            if (
+                call.name == MAPBOX_FORWARD_SEARCH_TOOL_NAME
+                and call.destination is not None
+            ):
+                destination_lookups[call.destination] = execution
+                destination_coordinates = self._coordinates_from_execution(execution)
+                if destination_coordinates is not None:
+                    coordinates[call.destination] = destination_coordinates
+
+        return executions
+
+    @staticmethod
+    def _coordinates_from_execution(
+        execution: ToolExecution,
+    ) -> tuple[float, float] | None:
+        if not execution.success:
+            return None
+        try:
+            payload = json.loads(execution.content)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            return None
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            longitude = result.get("longitude")
+            latitude = result.get("latitude")
+            if (
+                isinstance(longitude, (int, float))
+                and not isinstance(longitude, bool)
+                and isinstance(latitude, (int, float))
+                and not isinstance(latitude, bool)
+            ):
+                return float(longitude), float(latitude)
+        return None
+
+    @staticmethod
+    def _category_without_coordinates(
+        lookup: ToolExecution | None,
+    ) -> ToolExecution:
+        if lookup is not None and not lookup.success:
+            content = json.dumps(
+                {
+                    "success": False,
+                    "data": None,
+                    "errorCode": "destination_lookup_failed",
+                    "errorMessage": (
+                        "Không thể tìm tọa độ điểm đến trước khi tìm category."
+                    ),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            return ToolExecution(
+                content=content,
+                sources=(),
+                success=False,
+                system_failure=lookup.system_failure,
+                error_code="destination_lookup_failed",
+            )
+
+        return ToolExecution(
+            content=(
+                '{"success":true,"data":{"results":[],"rawResponse":{}}}'
+            ),
+            sources=(),
+            success=True,
+            system_failure=False,
+        )
 
     @staticmethod
     def _build_answer_messages(
@@ -178,16 +277,7 @@ class ChatOrchestrator:
     ) -> str:
         if not calls:
             return NO_TOOL_CONTEXT
-        payload = [
-            {
-                "request": {
-                    "name": call.name,
-                    "arguments": call.arguments,
-                },
-                "result": json.loads(execution.content),
-            }
-            for call, execution in zip(calls, executions, strict=True)
-        ]
+        payload = build_evidence_context(calls, executions)
         return TOOL_CONTEXT_TEMPLATE.format(
             tool_json=json.dumps(
                 payload,
@@ -198,6 +288,7 @@ class ChatOrchestrator:
 
     @staticmethod
     def _invoke_ai_message(model: Any, messages: list[Any]) -> AIMessage:
+        print_gemini_request("final_synthesis", messages)
         response = model.invoke(messages)
         if not isinstance(response, AIMessage):
             raise RuntimeError("Gemini returned an unsupported response type")

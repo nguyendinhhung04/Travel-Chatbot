@@ -30,8 +30,9 @@ from chatbot.tools.registry import ToolExecution
 class ChatOrchestratorTests(SimpleTestCase):
     def test_system_prompt_preserves_q_and_a_scope_and_place_safety(self):
         self.assertIn("fullAddress", SYSTEM_PROMPT)
-        self.assertIn("rawResponse", SYSTEM_PROMPT)
-        self.assertIn("mapboxId xuất hiện trong data.results", SYSTEM_PROMPT)
+        self.assertIn("evidence context", SYSTEM_PROMPT)
+        self.assertIn("mapboxId xuất hiện trong evidence context", SYSTEM_PROMPT)
+        self.assertIn("available, empty và failed", SYSTEM_PROMPT)
         self.assertIn("không tự tạo rating", SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SYSTEM_PROMPT)
         self.assertIn("unsupported", SYSTEM_PROMPT)
@@ -76,7 +77,8 @@ class ChatOrchestratorTests(SimpleTestCase):
         messages = model.invocations[0]
         self.assertIsInstance(messages[0], SystemMessage)
         self.assertIn('"primary_intent":"travel_qa"', messages[1].content)
-        self.assertIn('"success":true', messages[2].content)
+        self.assertIn('"generalKnowledge":{"status":"empty"}', messages[2].content)
+        self.assertNotIn("rawResponse", messages[2].content)
         self.assertEqual(
             [message.content for message in messages if isinstance(message, HumanMessage)],
             ["Tôi thích lịch sử", "Huế có gì?"],
@@ -90,7 +92,16 @@ class ChatOrchestratorTests(SimpleTestCase):
             entities=SemanticEntities(destinations=["Hà Nội"]),
         )
         mapbox_source = MapboxSource(attribution="Mapbox")
-        registry = StubRegistry(default_execution=successful_execution(mapbox_source))
+        registry = StubRegistry(
+            {
+                "mapbox_forward_search": mapbox_place_execution(
+                    105.854041,
+                    21.028333,
+                    mapbox_source,
+                ),
+            },
+            default_execution=successful_execution(mapbox_source),
+        )
         model = StubChatModel([AIMessage(content="Đã tìm thấy địa điểm phù hợp.")])
 
         result = ChatOrchestrator(
@@ -101,15 +112,101 @@ class ChatOrchestratorTests(SimpleTestCase):
         ).answer("Buổi tối ở Hà Nội có gì chơi?")
 
         self.assertEqual(
-            [arguments["category_id"] for _, arguments in registry.calls],
-            ["nightlife", "bar", "music_venue"],
+            [arguments["category_id"] for _, arguments in registry.calls[1:]],
+            ["tourist_attraction"],
+        )
+        self.assertEqual(registry.calls[0][0], "mapbox_forward_search")
+        self.assertEqual(registry.calls[0][1]["q"], "Hà Nội")
+        self.assertTrue(
+            all(
+                arguments["proximity"] == "105.854041,21.028333"
+                for _, arguments in registry.calls[1:]
+            )
         )
         self.assertTrue(
-            all(arguments["near"] == "Hà Nội" for _, arguments in registry.calls)
+            all("near" not in arguments for _, arguments in registry.calls[1:])
         )
         self.assertEqual(result.sources, [mapbox_source])
         self.assertFalse(
             any(name == "mapbox_list_categories" for name, _ in registry.calls)
+        )
+
+    def test_two_destinations_resolve_coordinates_before_category_search(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.DESTINATION_DISCOVERY,
+            actions=[SemanticActionType.DISCOVER_PLACES],
+            domains=[TravelDomain.NATURE],
+            entities=SemanticEntities(destinations=["Hà Nội", "Đà Lạt"]),
+        )
+        coordinates = {
+            "Hà Nội": (105.854041, 21.028333),
+            "Đà Lạt": (108.43307, 11.944269),
+        }
+        registry = StubRegistry(
+            {
+                "mapbox_forward_search": lambda arguments: mapbox_place_execution(
+                    *coordinates[arguments["q"]]
+                )
+            },
+            default_execution=successful_execution(),
+        )
+        model = StubChatModel([AIMessage(content="Đã so sánh hai điểm đến.")])
+
+        ChatOrchestrator(
+            model,
+            registry,
+            semantic_interpreter=StubInterpreter(interpretation),
+            max_tool_calls=18,
+        ).answer("Nên đi Hà Nội hay Đà Lạt?")
+
+        self.assertEqual(
+            registry.calls[:2],
+            [
+                (
+                    "mapbox_forward_search",
+                    {
+                        "q": "Hà Nội",
+                        "language": "vi",
+                        "limit": 3,
+                        "types": "city,place",
+                        "rank_strategy": "relevance",
+                        "auto_complete": False,
+                    },
+                ),
+                (
+                    "mapbox_forward_search",
+                    {
+                        "q": "Đà Lạt",
+                        "language": "vi",
+                        "limit": 3,
+                        "types": "city,place",
+                        "rank_strategy": "relevance",
+                        "auto_complete": False,
+                    },
+                ),
+            ],
+        )
+        category_calls = [
+            (name, arguments)
+            for name, arguments in registry.calls
+            if name == "mapbox_category_search"
+        ]
+        self.assertEqual(len(category_calls), 2)
+        self.assertTrue(
+            all(
+                arguments["category_id"] == "tourist_attraction"
+                for _, arguments in category_calls
+            )
+        )
+        self.assertEqual(
+            {
+                arguments["proximity"]
+                for _, arguments in category_calls
+            },
+            {"105.854041,21.028333", "108.43307,11.944269"},
+        )
+        self.assertTrue(
+            all("near" not in arguments for _, arguments in category_calls)
         )
 
     def test_general_chat_and_clarification_do_not_call_tools(self):
@@ -161,8 +258,8 @@ class ChatOrchestratorTests(SimpleTestCase):
         ).answer("Gợi ý lịch trình thiên nhiên ở Đà Nẵng")
 
         self.assertEqual(len(registry.calls), 2)
-        self.assertEqual(registry.calls[0][0], "search_travel_knowledge")
-        self.assertEqual(registry.calls[1][0], "mapbox_category_search")
+        self.assertEqual(registry.calls[0][0], "mapbox_forward_search")
+        self.assertEqual(registry.calls[1][0], "search_travel_knowledge")
 
     def test_all_planned_tools_failing_from_infrastructure_raises(self):
         interpretation = build_interpretation(
@@ -191,7 +288,7 @@ class ChatOrchestratorTests(SimpleTestCase):
 
         self.assertEqual(model.invocations, [])
 
-    def test_terminal_diagnostic_prints_semantics_and_model_response(self):
+    def test_terminal_diagnostic_prints_full_request_semantics_and_response(self):
         interpretation = build_interpretation(
             intent=TravelIntent.GENERAL_CHAT,
             actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
@@ -208,12 +305,14 @@ class ChatOrchestratorTests(SimpleTestCase):
             ).answer("Nội dung người dùng không được in")
 
         output = terminal_output.getvalue()
+        self.assertIn("Gemini request data:", output)
+        self.assertIn('"stage": "final_synthesis"', output)
+        self.assertIn("Nội dung người dùng không được in", output)
         self.assertIn("SemanticInterpretation result:", output)
         self.assertIn('"primary_intent": "general_chat"', output)
         self.assertIn('"normalized_query":', output)
         self.assertIn("Gemini response:", output)
         self.assertIn("Xin chào!", output)
-        self.assertNotIn("Nội dung người dùng không được in", output)
 
     def test_invalid_max_calls_and_empty_model_answer_are_rejected(self):
         interpretation = build_interpretation(
@@ -272,6 +371,22 @@ def successful_execution(*sources):
     )
 
 
+def mapbox_place_execution(longitude, latitude, *sources):
+    return ToolExecution(
+        content=(
+            '{"success":true,"data":{"results":[{'
+            '"mapboxId":"place.1","name":"Điểm đến",'
+            '"featureType":"place","longitude":'
+            f'{longitude},"latitude":{latitude},'
+            '"poiCategories":[],"poiCategoryIds":[]'
+            '}],"rawResponse":{}}}'
+        ),
+        sources=tuple(sources),
+        success=True,
+        system_failure=False,
+    )
+
+
 class StubInterpreter:
     def __init__(self, interpretation):
         self.interpretation = interpretation
@@ -291,7 +406,8 @@ class StubRegistry:
     def execute(self, name, arguments):
         self.calls.append((name, arguments))
         if name in self.executions:
-            return self.executions[name]
+            execution = self.executions[name]
+            return execution(arguments) if callable(execution) else execution
         if self.default_execution is not None:
             return self.default_execution
         raise AssertionError(f"Unexpected tool call: {name}")

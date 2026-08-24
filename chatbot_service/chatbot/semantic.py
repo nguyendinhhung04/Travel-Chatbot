@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from chatbot.gemini_diagnostics import print_gemini_request
 from chatbot.intent import INTENT_DESCRIPTIONS, TravelIntent
 from chatbot.rag.rag_chain import get_chat_model
 
@@ -249,6 +250,11 @@ class SemanticInterpreter:
                 )
             ),
         ]
+        print_gemini_request(
+            "semantic_interpretation",
+            messages,
+            response_schema=SemanticInterpretation.model_json_schema(),
+        )
         result = self._structured_model.invoke(messages)
         if isinstance(result, SemanticInterpretation):
             return result
