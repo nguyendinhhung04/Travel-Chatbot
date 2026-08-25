@@ -15,7 +15,7 @@ Tao file `.env`:
 ```env
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
-GEMINI_CHAT_MODEL=gemini-3.6-flash
+GEMINI_CHAT_MODEL=gemini-3.5-flash-lite
 MAPBOX_TOOL_BASE_URL=http://localhost:5257
 MAPBOX_TOOL_TIMEOUT_SECONDS=12
 CHATBOT_MAX_TOOL_CALLS=4
@@ -115,7 +115,9 @@ Moi request duoc xu ly theo thu tu:
 1. Gemini tra ve `SemanticInterpretation` da duoc Pydantic validate.
 2. Backend `ToolPlanner` chon tool tu intent va semantic action.
 3. `CategoryResolver` anh xa travel domain sang canonical Mapbox category trong whitelist.
-4. Backend thuc thi tool doc du lieu va dua ket qua cho Gemini tong hop cau tra loi.
+4. Voi destination discovery, Gemini tao candidate; ASP.NET xac minh ca batch,
+   matching, loai trung va chi tra DTO da chuan hoa.
+5. Django dua evidence da xac minh cho Gemini tong hop cau tra loi.
 
 Bo runtime tool gom:
 
@@ -123,6 +125,8 @@ Bo runtime tool gom:
 - `mapbox_forward_search`: ten rieng, dia chi hoac POI cu the.
 - `mapbox_category_search`: kham pha POI theo category do backend resolve.
 - `mapbox_reverse_lookup`: tra dia diem tu toa do.
+- `mapbox_resolve_candidates`: batch noi bo cho destination discovery; Django khong
+  xu ly raw Mapbox hoac tu matching provider result.
 
 `mapbox_list_categories` khong nam trong runtime flow. Danh sach category da duoc loc
 trong `docs/travel_categories_mapbox.md`, vi vay chatbot khong can tai lai toan bo

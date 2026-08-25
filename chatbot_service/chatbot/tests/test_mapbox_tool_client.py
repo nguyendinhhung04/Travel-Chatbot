@@ -13,12 +13,75 @@ from chatbot.tools.mapbox_client import (
 )
 from chatbot.tools.models import (
     MapboxCategorySearchInput,
+    MapboxCandidateInput,
+    MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
     MapboxReverseLookupInput,
 )
 
 
 class MapboxToolClientTests(SimpleTestCase):
+    def test_resolve_candidates_posts_batch_contract(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = (request.url.path, json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {
+                        "attribution": "Mapbox",
+                        "results": [],
+                        "additionalPlaces": [],
+                    },
+                    "errorCode": None,
+                    "errorMessage": None,
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            result = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            ).resolve_candidates(
+                MapboxCandidateResolveInput(
+                    longitude=108.44,
+                    latitude=11.94,
+                    candidates=[
+                        MapboxCandidateInput(
+                            candidateId="candidate-1",
+                            name="Hồ Xuân Hương",
+                            aliases=["Xuan Huong Lake"],
+                            categoryHints=["lake"],
+                        )
+                    ],
+                    categoryId="tourist_attraction",
+                )
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            captured,
+            (
+                "/api/chatbot/tools/mapbox-resolve-candidates",
+                {
+                    "longitude": 108.44,
+                    "latitude": 11.94,
+                    "candidates": [
+                        {
+                            "candidateId": "candidate-1",
+                            "name": "Hồ Xuân Hương",
+                            "aliases": ["Xuan Huong Lake"],
+                            "categoryHints": ["lake"],
+                        }
+                    ],
+                    "categoryId": "tourist_attraction",
+                },
+            ),
+        )
+
     def test_three_methods_post_to_expected_endpoints_with_snake_case_json(self):
         requests: list[tuple[str, dict]] = []
 
@@ -61,7 +124,7 @@ class MapboxToolClientTests(SimpleTestCase):
         self.assertTrue(forward.success)
         self.assertTrue(category_search.success)
         self.assertTrue(reverse.success)
-        self.assertEqual(forward.data.raw_response["type"], "FeatureCollection")
+        self.assertEqual(forward.data.results, [])
         self.assertEqual(
             requests,
             [
@@ -164,11 +227,6 @@ PLACE_SUCCESS_RESPONSE = {
     "data": {
         "attribution": "Mapbox",
         "results": [],
-        "rawResponse": {
-            "type": "FeatureCollection",
-            "features": [],
-            "attribution": "Mapbox",
-        },
     },
     "errorCode": None,
     "errorMessage": None,

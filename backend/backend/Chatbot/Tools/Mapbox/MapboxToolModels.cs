@@ -1,12 +1,10 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Backend.Chatbot.Tools.Mapbox;
 
 public sealed record MapboxPlaceToolData(
     [property: JsonPropertyName("attribution")] string Attribution,
-    [property: JsonPropertyName("results")] IReadOnlyList<MapboxPlaceItem> Results,
-    [property: JsonPropertyName("rawResponse")] JsonElement RawResponse);
+    [property: JsonPropertyName("results")] IReadOnlyList<MapboxPlaceItem> Results);
 
 public sealed record MapboxPlaceItem(
     [property: JsonPropertyName("mapboxId")] string MapboxId,

@@ -105,20 +105,6 @@ class ToolResponseModelTests(SimpleTestCase):
                             "popularity": 0.91,
                         }
                     ],
-                    "rawResponse": {
-                        "type": "FeatureCollection",
-                        "features": [
-                            {
-                                "properties": {
-                                    "mapbox_id": "mapbox.poi.1",
-                                    "brand": ["Coffee Brand"],
-                                    "metadata": {"phone": "0123456789"},
-                                }
-                            }
-                        ],
-                        "attribution": "Mapbox",
-                        "response_id": "response-1",
-                    },
                 },
                 "errorCode": None,
                 "errorMessage": None,
@@ -130,13 +116,6 @@ class ToolResponseModelTests(SimpleTestCase):
         self.assertEqual(result.data.results[0].distance_meters, 120.5)
         self.assertEqual(result.data.results[0].rating, 4.6)
         self.assertEqual(result.data.results[0].popularity, 0.91)
-        self.assertEqual(
-            result.data.raw_response["features"][0]["properties"]["metadata"][
-                "phone"
-            ],
-            "0123456789",
-        )
-        self.assertEqual(result.data.raw_response["response_id"], "response-1")
 
     def test_failure_envelope_parses_camel_case(self):
         failure = ToolResult[MapboxPlaceToolData].model_validate(

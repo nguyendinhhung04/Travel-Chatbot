@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Backend.Chatbot.Tools.Mapbox;
 using Backend.Mapbox;
 
@@ -49,14 +50,9 @@ public sealed class MapboxToolsTests
         Assert.Equal(3.2, place.EtaMinutes);
         Assert.Equal(4.7, place.Rating);
         Assert.Equal(0.91, place.Popularity);
-        Assert.True(
-            data.RawResponse
-                .GetProperty("features")[0]
-                .GetProperty("properties")
-                .GetProperty("metadata")
-                .GetProperty("ignored")
-                .GetBoolean());
-        Assert.Equal("ignored", data.RawResponse.GetProperty("response_id").GetString());
+        var serialized = JsonSerializer.Serialize(data);
+        Assert.DoesNotContain("rawResponse", serialized);
+        Assert.DoesNotContain("ignored", serialized);
     }
 
     [Fact]
@@ -136,7 +132,6 @@ public sealed class MapboxToolsTests
             data.Results.Select(place => place.MapboxId));
         Assert.Null(data.Results[0].Rating);
         Assert.Equal(0.9, data.Results[0].Popularity);
-        Assert.Equal(8, data.RawResponse.GetProperty("features").GetArrayLength());
     }
 
     [Fact]

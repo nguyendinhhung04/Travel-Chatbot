@@ -37,7 +37,7 @@ GEMINI_EMBEDDING_MODEL = os.getenv(
 )
 GEMINI_CHAT_MODEL = os.getenv(
     'GEMINI_CHAT_MODEL',
-    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
 )
 
 

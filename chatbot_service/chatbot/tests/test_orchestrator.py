@@ -260,14 +260,14 @@ class ChatOrchestratorTests(SimpleTestCase):
             [
                 "search_travel_knowledge",
                 "mapbox_forward_search",
-                "mapbox_category_search",
+                "mapbox_resolve_candidates",
             ],
         )
-        category_arguments = registry.calls[2][1]
-        self.assertEqual(category_arguments["category_id"], "tourist_attraction")
-        self.assertEqual(category_arguments["proximity"], "108.458313,11.940419")
-        self.assertNotIn("types", category_arguments)
-        self.assertNotIn("near", category_arguments)
+        resolution_arguments = registry.calls[2][1]
+        self.assertEqual(resolution_arguments["categoryId"], "tourist_attraction")
+        self.assertEqual(resolution_arguments["longitude"], 108.458313)
+        self.assertEqual(resolution_arguments["latitude"], 11.940419)
+        self.assertEqual(resolution_arguments["candidates"], [])
         self.assertEqual(result.sources, [mapbox_source])
         messages = model.invocations[0]
         self.assertIn(

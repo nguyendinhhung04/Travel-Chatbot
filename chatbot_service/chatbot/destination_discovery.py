@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
-from difflib import SequenceMatcher
-from enum import Enum
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -19,23 +15,22 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from chatbot.semantic import ConversationMessage, SemanticInterpretation
 from chatbot.tool_planner import PlannedToolCall
 from chatbot.tools.models import (
-    MapboxPlaceItem,
-    MapboxPlaceToolData,
+    MapboxCandidateMatch,
+    MapboxCandidateResolutionData,
     ToolResult,
 )
 from chatbot.tools.registry import (
-    MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+    MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME,
     ToolExecution,
     ToolRegistry,
 )
 
 
 MAX_DESTINATION_CANDIDATES = 5
-MINIMUM_NAME_SIMILARITY = 0.88
-AMBIGUOUS_SCORE_GAP = 0.05
-MINIMUM_DISTANCE_GAP_METERS = 100.0
 logger = logging.getLogger(__name__)
-_PLACE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceToolData])
+_CANDIDATE_RESULT_ADAPTER = TypeAdapter(
+    ToolResult[MapboxCandidateResolutionData]
+)
 
 CANDIDATE_SYSTEM_PROMPT = """Tạo tối đa 5 ứng viên nổi bật cho điểm đến được cung cấp.
 Ưu tiên Knowledge Base, sau đó mới dùng kiến thức ổn định. Chỉ trả name, aliases,
@@ -72,20 +67,6 @@ class DestinationCandidateSet(DiscoveryModel):
         default_factory=list,
         max_length=MAX_DESTINATION_CANDIDATES,
     )
-
-
-class CandidateMatchStatus(str, Enum):
-    MATCHED = "matched"
-    AMBIGUOUS = "ambiguous"
-    NOT_FOUND = "not_found"
-    LOOKUP_FAILED = "lookup_failed"
-
-
-class CandidateMatch(DiscoveryModel):
-    candidate: DestinationCandidate
-    status: CandidateMatchStatus
-    similarity: float | None = Field(default=None, ge=0, le=1)
-    place: MapboxPlaceItem | None = None
 
 
 class DestinationCandidateGenerator:
@@ -194,66 +175,41 @@ class DestinationDiscoveryPipeline:
             if destination_execution is not None:
                 coordinates = self._first_result_coordinates(destination_execution)
 
-        matches: list[CandidateMatch] = []
-        matched_data: list[tuple[CandidateMatch, MapboxPlaceToolData]] = []
-        category_data: MapboxPlaceToolData | None = None
         category_call = next(
             (call for call in planned_calls if call.evidence_kind == "poi"),
             None,
         )
-
-        if coordinates is not None:
-            reserved_category_calls = 1 if category_call is not None else 0
-            candidate_budget = max(
-                0,
-                self._max_tool_calls - len(calls) - reserved_category_calls,
+        resolution_data: MapboxCandidateResolutionData | None = None
+        candidate_by_id = {
+            f"candidate-{index}": candidate
+            for index, candidate in enumerate(candidates.candidates, start=1)
+        }
+        if coordinates is not None and self._has_budget(calls):
+            resolution_call = self._candidate_resolution_call(
+                coordinates,
+                candidate_by_id,
+                category_call,
             )
-            for candidate in candidates.candidates[:candidate_budget]:
-                candidate_call = self._candidate_forward_call(
-                    candidate.name,
-                    coordinates,
-                )
-                self._print_verification_request(candidate_call)
-                candidate_execution = self._registry.execute(
-                    candidate_call.name,
-                    candidate_call.arguments,
-                )
-                self._print_verification_response(candidate_execution)
-                calls.append(candidate_call)
-                executions.append(candidate_execution)
-                place_data = self._parse_place_data(candidate_execution)
-                match = (
-                    match_candidate(candidate, place_data.results)
-                    if place_data is not None
-                    else failed_candidate_match(candidate)
-                )
-                matches.append(match)
-                if match.status == CandidateMatchStatus.MATCHED:
-                    matched_data.append((match, place_data))
-
-            if category_call is not None and self._has_budget(calls):
-                resolved_category_call = self._with_proximity(
-                    category_call,
-                    coordinates,
-                )
-                category_execution = self._registry.execute(
-                    resolved_category_call.name,
-                    resolved_category_call.arguments,
-                )
-                calls.append(resolved_category_call)
-                executions.append(category_execution)
-                category_data = self._parse_place_data(category_execution)
+            self._print_verification_request(resolution_call)
+            resolution_execution = self._registry.execute(
+                resolution_call.name,
+                resolution_call.arguments,
+            )
+            self._print_verification_response(resolution_execution)
+            calls.append(resolution_call)
+            executions.append(resolution_execution)
+            resolution_data = self._parse_resolution_data(resolution_execution)
 
         evidence = self._build_evidence(
             rag_execution=rag_execution,
-            matched_data=matched_data,
-            category_data=category_data,
+            candidate_by_id=candidate_by_id,
+            resolution_data=resolution_data,
             destination_resolved=coordinates is not None,
         )
         self._print_verification_result(
             destination=candidates.destination,
             destination_resolved=coordinates is not None,
-            matches=matches,
+            matches=resolution_data.results if resolution_data is not None else (),
             evidence=evidence,
         )
         return DestinationDiscoveryPipelineResult(calls, executions, evidence)
@@ -329,60 +285,57 @@ class DestinationDiscoveryPipeline:
             return None
 
     @staticmethod
-    def _candidate_forward_call(
-        candidate_name: str,
+    def _candidate_resolution_call(
         coordinates: tuple[float, float],
+        candidate_by_id: dict[str, DestinationCandidate],
+        category_call: PlannedToolCall | None,
     ) -> PlannedToolCall:
         longitude, latitude = coordinates
+        arguments: dict[str, Any] = {
+            "longitude": longitude,
+            "latitude": latitude,
+            "candidates": [
+                {
+                    "candidateId": candidate_id,
+                    "name": candidate.name,
+                    "aliases": candidate.aliases,
+                    "categoryHints": candidate.category_hints,
+                }
+                for candidate_id, candidate in candidate_by_id.items()
+            ],
+        }
+        if category_call is not None:
+            category_id = category_call.arguments.get("category_id")
+            if category_id is not None:
+                arguments["categoryId"] = category_id
+            minimum_rating = category_call.arguments.get("minimum_rating")
+            if minimum_rating is not None:
+                arguments["minimumRating"] = minimum_rating
         return PlannedToolCall(
-            MAPBOX_FORWARD_SEARCH_TOOL_NAME,
-            {
-                "q": candidate_name,
-                "language": "vi",
-                "limit": 2,
-                "proximity": f"{longitude},{latitude}",
-                "types": "poi",
-                "rank_strategy": "relevance",
-                "auto_complete": False,
-            },
-            evidence_kind="candidate_lookup",
-        )
-
-    @staticmethod
-    def _with_proximity(
-        call: PlannedToolCall,
-        coordinates: tuple[float, float],
-    ) -> PlannedToolCall:
-        longitude, latitude = coordinates
-        arguments = dict(call.arguments)
-        arguments.pop("near", None)
-        arguments["proximity"] = f"{longitude},{latitude}"
-        return PlannedToolCall(
-            call.name,
+            MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME,
             arguments,
-            destination=call.destination,
-            evidence_kind=call.evidence_kind,
+            evidence_kind="candidate_resolution",
         )
 
     @staticmethod
-    def _parse_place_data(
+    def _parse_resolution_data(
         execution: ToolExecution,
-    ) -> MapboxPlaceToolData | None:
+    ) -> MapboxCandidateResolutionData | None:
         if not execution.success:
             return None
         try:
-            result = _PLACE_RESULT_ADAPTER.validate_json(execution.content)
+            result = _CANDIDATE_RESULT_ADAPTER.validate_json(execution.content)
         except (ValidationError, ValueError):
             return None
         return result.data
 
     @staticmethod
     def _print_verification_request(call: PlannedToolCall) -> None:
-        """Print the sanitized Mapbox request used to verify one candidate."""
+        """Print the sanitized batch request used to verify candidates."""
         payload = {
-            "method": "GET",
-            "path": "/search/searchbox/v1/forward",
-            "query": call.arguments,
+            "method": "POST",
+            "path": "/api/chatbot/tools/mapbox-resolve-candidates",
+            "body": call.arguments,
             "accessToken": "[server-side omitted]",
         }
         output = "Destination verification Mapbox request:\n" + json.dumps(
@@ -399,7 +352,7 @@ class DestinationDiscoveryPipeline:
 
     @staticmethod
     def _print_verification_response(execution: ToolExecution) -> None:
-        """Print the raw Mapbox response returned for candidate verification."""
+        """Print only the normalized candidate-resolution response."""
         try:
             tool_payload = json.loads(execution.content)
         except (TypeError, ValueError):
@@ -409,17 +362,7 @@ class DestinationDiscoveryPipeline:
                 "errorMessage": "Không thể đọc response từ Mapbox tool.",
             }
         else:
-            data = tool_payload.get("data") if isinstance(tool_payload, dict) else None
-            raw_response = data.get("rawResponse") if isinstance(data, dict) else None
-            response_payload = (
-                raw_response
-                if raw_response is not None
-                else {
-                    "success": tool_payload.get("success"),
-                    "errorCode": tool_payload.get("errorCode"),
-                    "errorMessage": tool_payload.get("errorMessage"),
-                }
-            )
+            response_payload = tool_payload
 
         output = "Destination verification Mapbox response:\n" + json.dumps(
             response_payload,
@@ -478,39 +421,31 @@ class DestinationDiscoveryPipeline:
     def _build_evidence(
         *,
         rag_execution: ToolExecution | None,
-        matched_data: Sequence[tuple[CandidateMatch, MapboxPlaceToolData]],
-        category_data: MapboxPlaceToolData | None,
+        candidate_by_id: dict[str, DestinationCandidate],
+        resolution_data: MapboxCandidateResolutionData | None,
         destination_resolved: bool,
     ) -> dict[str, Any]:
         matched_places: list[dict[str, Any]] = []
-        seen_mapbox_ids: set[str] = set()
-        for match, _data in matched_data:
-            if match.place is None or match.place.mapbox_id in seen_mapbox_ids:
-                continue
-            seen_mapbox_ids.add(match.place.mapbox_id)
-            matched_places.append(
-                {
-                    "name": match.candidate.name,
-                    "mapboxId": match.place.mapbox_id,
-                    "fullAddress": match.place.full_address,
-                    "categoryHints": match.candidate.category_hints,
-                    "reason": match.candidate.reason,
-                    "poiCategories": match.place.poi_categories,
-                    "distanceMeters": match.place.distance_meters,
-                    "etaMinutes": match.place.eta_minutes,
-                    "rating": match.place.rating,
-                    "popularity": match.place.popularity,
-                }
-            )
-
-        additional_places: list[dict[str, Any]] = []
-        if category_data is not None:
-            for place in category_data.results:
-                if place.mapbox_id in seen_mapbox_ids:
+        if resolution_data is not None:
+            for match in resolution_data.results:
+                candidate = candidate_by_id.get(match.candidate_id)
+                if match.status != "matched" or match.place is None or candidate is None:
                     continue
-                seen_mapbox_ids.add(place.mapbox_id)
-                additional_places.append(
-                    DestinationDiscoveryPipeline._safe_place(place, category_data)
+                matched_places.append(
+                    {
+                        "name": candidate.name,
+                        "mapboxId": match.place.mapbox_id,
+                        "fullAddress": match.place.full_address,
+                        "categoryHints": candidate.category_hints,
+                        "reason": candidate.reason,
+                        "poiCategories": match.place.poi_categories,
+                        "longitude": match.place.longitude,
+                        "latitude": match.place.latitude,
+                        "distanceMeters": match.place.distance_meters,
+                        "etaMinutes": match.place.eta_minutes,
+                        "rating": match.place.rating,
+                        "popularity": match.place.popularity,
+                    }
                 )
 
         return {
@@ -519,50 +454,22 @@ class DestinationDiscoveryPipeline:
             ),
             "destinationResolved": destination_resolved,
             "matchedCandidates": matched_places,
-            "additionalMapboxPlaces": additional_places,
+            "additionalMapboxPlaces": [
+                {"place": place.model_dump(mode="json", by_alias=True)}
+                for place in (
+                    resolution_data.additional_places
+                    if resolution_data is not None
+                    else ()
+                )
+            ],
         }
-
-    @staticmethod
-    def _safe_place(
-        place: MapboxPlaceItem,
-        data: MapboxPlaceToolData,
-    ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "place": place.model_dump(mode="json", by_alias=True),
-        }
-        provider_details = DestinationDiscoveryPipeline._provider_details_for(
-            place.mapbox_id,
-            data.raw_response,
-        )
-        if provider_details is not None:
-            payload["providerDetails"] = provider_details
-        return payload
-
-    @staticmethod
-    def _provider_details_for(
-        mapbox_id: str,
-        raw_response: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        features = raw_response.get("features")
-        if not isinstance(features, list):
-            return None
-        for feature in features:
-            if not isinstance(feature, dict):
-                continue
-            properties = feature.get("properties")
-            if (
-                isinstance(properties, dict)
-                and properties.get("mapbox_id") == mapbox_id
-            ):
-                return properties
-        return None
 
     @staticmethod
     def _print_verification_result(
         *,
         destination: str,
         destination_resolved: bool,
-        matches: Sequence[CandidateMatch],
+        matches: Sequence[MapboxCandidateMatch],
         evidence: dict[str, Any],
     ) -> None:
         """Print verification outcomes without exposing prompts or raw responses."""
@@ -571,8 +478,8 @@ class DestinationDiscoveryPipeline:
             "destinationResolved": destination_resolved,
             "candidates": [
                 {
-                    "name": match.candidate.name,
-                    "status": match.status.value,
+                    "candidateId": match.candidate_id,
+                    "status": match.status,
                     "similarity": match.similarity,
                     "matchedPlace": (
                         {
@@ -606,163 +513,12 @@ class DestinationDiscoveryPipeline:
         print(output, end="", flush=True)
 
 
-def normalize_place_name(value: str) -> str:
-    """Normalize Vietnamese and international place names for comparison."""
-    value = value.lower().replace("đ", "d")
-    decomposed = unicodedata.normalize("NFD", value)
-    without_marks = "".join(
-        character
-        for character in decomposed
-        if unicodedata.category(character) != "Mn"
-    )
-    words = re.findall(r"[a-z0-9]+", without_marks)
-    return " ".join(words)
-
-
-def place_name_similarity(left: str, right: str) -> float:
-    """Return the best ordered or token-sorted name similarity."""
-    normalized_left = normalize_place_name(left)
-    normalized_right = normalize_place_name(right)
-    if not normalized_left or not normalized_right:
-        return 0.0
-    if normalized_left == normalized_right:
-        return 1.0
-    ordered_score = SequenceMatcher(
-        None,
-        normalized_left,
-        normalized_right,
-    ).ratio()
-    token_score = SequenceMatcher(
-        None,
-        " ".join(sorted(normalized_left.split())),
-        " ".join(sorted(normalized_right.split())),
-    ).ratio()
-    return max(ordered_score, token_score)
-
-
-def match_candidate(
-    candidate: DestinationCandidate,
-    places: Sequence[MapboxPlaceItem],
-) -> CandidateMatch:
-    """Match one Gemini candidate to at most one Mapbox result."""
-    names = [candidate.name, *candidate.aliases]
-    scored = [
-        (
-            max(place_name_similarity(name, place.name) for name in names),
-            _category_matches(candidate.category_hints, place),
-            place,
-        )
-        for place in places
-    ]
-    eligible = [item for item in scored if item[0] >= MINIMUM_NAME_SIMILARITY]
-    if not eligible:
-        return CandidateMatch(
-            candidate=candidate,
-            status=CandidateMatchStatus.NOT_FOUND,
-        )
-
-    category_matches = [item for item in eligible if item[1]]
-    ranked = sorted(
-        category_matches or eligible,
-        key=lambda item: (
-            -item[0],
-            item[2].distance_meters
-            if item[2].distance_meters is not None
-            else float("inf"),
-        ),
-    )
-
-    exact_matches = [item for item in ranked if item[0] == 1.0]
-    if len(exact_matches) == 1:
-        best_score, _, best_place = exact_matches[0]
-        return CandidateMatch(
-            candidate=candidate,
-            status=CandidateMatchStatus.MATCHED,
-            similarity=best_score,
-            place=best_place,
-        )
-    if len(exact_matches) > 1:
-        best_score, _, best_place = exact_matches[0]
-        first_distance = best_place.distance_meters
-        second_distance = exact_matches[1][2].distance_meters
-        if (
-            first_distance is not None
-            and second_distance is not None
-            and second_distance - first_distance >= MINIMUM_DISTANCE_GAP_METERS
-        ):
-            return CandidateMatch(
-                candidate=candidate,
-                status=CandidateMatchStatus.MATCHED,
-                similarity=best_score,
-                place=best_place,
-            )
-        return CandidateMatch(
-            candidate=candidate,
-            status=CandidateMatchStatus.AMBIGUOUS,
-            similarity=best_score,
-        )
-
-    best_score, _, best_place = ranked[0]
-    if (
-        len(ranked) > 1
-        and best_score - ranked[1][0] < AMBIGUOUS_SCORE_GAP
-    ):
-        return CandidateMatch(
-            candidate=candidate,
-            status=CandidateMatchStatus.AMBIGUOUS,
-            similarity=best_score,
-        )
-    return CandidateMatch(
-        candidate=candidate,
-        status=CandidateMatchStatus.MATCHED,
-        similarity=best_score,
-        place=best_place,
-    )
-
-
-def failed_candidate_match(
-    candidate: DestinationCandidate,
-) -> CandidateMatch:
-    return CandidateMatch(
-        candidate=candidate,
-        status=CandidateMatchStatus.LOOKUP_FAILED,
-    )
-
-
-def _category_matches(
-    category_hints: Sequence[str],
-    place: MapboxPlaceItem,
-) -> bool:
-    normalized_hints = {
-        normalize_place_name(value)
-        for value in category_hints
-        if normalize_place_name(value)
-    }
-    if not normalized_hints:
-        return False
-    categories = {
-        normalize_place_name(value)
-        for value in [*place.poi_categories, *place.poi_category_ids]
-        if normalize_place_name(value)
-    }
-    return bool(normalized_hints.intersection(categories))
-
-
 __all__ = [
-    "AMBIGUOUS_SCORE_GAP",
-    "MINIMUM_DISTANCE_GAP_METERS",
     "CANDIDATE_SYSTEM_PROMPT",
     "MAX_DESTINATION_CANDIDATES",
-    "MINIMUM_NAME_SIMILARITY",
-    "CandidateMatch",
-    "CandidateMatchStatus",
     "DestinationCandidate",
     "DestinationCandidateGenerator",
     "DestinationCandidateSet",
     "DestinationDiscoveryPipeline",
     "DestinationDiscoveryPipelineResult",
-    "failed_candidate_match",
-    "match_candidate",
-    "normalize_place_name",
-    "place_name_similarity",
 ]

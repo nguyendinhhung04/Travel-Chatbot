@@ -11,6 +11,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from .models import (
     MapboxCategorySearchInput,
+    MapboxCandidateResolutionData,
+    MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
@@ -25,6 +27,7 @@ TOOL_UNAVAILABLE_ERROR = "tool_unavailable"
 TOOL_INVALID_RESPONSE_ERROR = "tool_invalid_response"
 
 _PLACE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceToolData])
+_CANDIDATE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxCandidateResolutionData])
 _ResultData = TypeVar("_ResultData")
 
 
@@ -77,6 +80,16 @@ class MapboxToolClient:
             "/api/chatbot/tools/mapbox-reverse-lookup",
             request.model_dump(exclude_none=True),
             _PLACE_RESULT_ADAPTER,
+        )
+
+    def resolve_candidates(
+        self,
+        request: MapboxCandidateResolveInput,
+    ) -> ToolResult[MapboxCandidateResolutionData]:
+        return self._post(
+            "/api/chatbot/tools/mapbox-resolve-candidates",
+            request.model_dump(mode="json", by_alias=True, exclude_none=True),
+            _CANDIDATE_RESULT_ADAPTER,
         )
 
     def close(self) -> None:

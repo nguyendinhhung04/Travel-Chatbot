@@ -175,3 +175,49 @@ public sealed record MapboxReverseLookupToolHttpRequest
         ShowClosedPois = ShowClosedPois
     };
 }
+
+public sealed record MapboxCandidateResolveToolHttpRequest
+{
+    [JsonPropertyName("longitude")]
+    public double? Longitude { get; init; }
+
+    [JsonPropertyName("latitude")]
+    public double? Latitude { get; init; }
+
+    [JsonPropertyName("candidates")]
+    public IReadOnlyList<MapboxCandidateHttpInput>? Candidates { get; init; }
+
+    [JsonPropertyName("categoryId")]
+    public string? CategoryId { get; init; }
+
+    [JsonPropertyName("minimumRating")]
+    public double? MinimumRating { get; init; }
+
+    public MapboxCandidateResolutionRequest ToResolutionRequest() => new(
+        Longitude ?? double.NaN,
+        Latitude ?? double.NaN,
+        (Candidates ?? []).Select(candidate => candidate.ToCandidate()).ToArray(),
+        CategoryId,
+        MinimumRating);
+}
+
+public sealed record MapboxCandidateHttpInput
+{
+    [JsonPropertyName("candidateId")]
+    public string? CandidateId { get; init; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [JsonPropertyName("aliases")]
+    public IReadOnlyList<string>? Aliases { get; init; }
+
+    [JsonPropertyName("categoryHints")]
+    public IReadOnlyList<string>? CategoryHints { get; init; }
+
+    public MapboxCandidateInput ToCandidate() => new(
+        CandidateId ?? string.Empty,
+        Name ?? string.Empty,
+        Aliases ?? [],
+        CategoryHints ?? []);
+}

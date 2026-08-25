@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -127,7 +127,58 @@ class MapboxPlaceItem(ToolModel):
 class MapboxPlaceToolData(ToolModel):
     attribution: NonEmptyString
     results: list[MapboxPlaceItem]
-    raw_response: dict[str, Any] = Field(alias="rawResponse")
+
+
+class MapboxCandidateInput(ToolModel):
+    candidate_id: NonEmptyString = Field(alias="candidateId")
+    name: NonEmptyString
+    aliases: list[NonEmptyString] = Field(default_factory=list, max_length=5)
+    category_hints: list[NonEmptyString] = Field(
+        default_factory=list,
+        alias="categoryHints",
+        max_length=5,
+    )
+
+
+class MapboxCandidateResolveInput(ToolModel):
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    candidates: list[MapboxCandidateInput] = Field(default_factory=list, max_length=5)
+    category_id: NonEmptyString | None = Field(default=None, alias="categoryId")
+    minimum_rating: float | None = Field(
+        default=None,
+        alias="minimumRating",
+        ge=0,
+        le=5,
+    )
+
+    @model_validator(mode="after")
+    def require_candidate_or_category(self) -> MapboxCandidateResolveInput:
+        if not self.candidates and self.category_id is None:
+            raise ValueError("At least one candidate or categoryId is required.")
+        candidate_ids = [candidate.candidate_id for candidate in self.candidates]
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("candidateId values must be unique.")
+        return self
+
+
+class MapboxCandidateMatch(ToolModel):
+    candidate_id: NonEmptyString = Field(alias="candidateId")
+    status: Literal[
+        "matched",
+        "ambiguous",
+        "not_found",
+        "lookup_failed",
+        "duplicate",
+    ]
+    similarity: float | None = Field(default=None, ge=0, le=1)
+    place: MapboxPlaceItem | None = None
+
+
+class MapboxCandidateResolutionData(ToolModel):
+    attribution: NonEmptyString
+    results: list[MapboxCandidateMatch]
+    additional_places: list[MapboxPlaceItem] = Field(alias="additionalPlaces")
 
 
 class ToolResult(ToolModel, Generic[ToolData]):
@@ -188,6 +239,10 @@ __all__ = [
     "ChatSource",
     "KnowledgeBaseSource",
     "MapboxCategorySearchInput",
+    "MapboxCandidateInput",
+    "MapboxCandidateMatch",
+    "MapboxCandidateResolutionData",
+    "MapboxCandidateResolveInput",
     "MapboxForwardSearchInput",
     "MapboxPlaceItem",
     "MapboxPlaceToolData",

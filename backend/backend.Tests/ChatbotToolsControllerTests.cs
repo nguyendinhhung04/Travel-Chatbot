@@ -301,7 +301,10 @@ public sealed class ChatbotToolsControllerTests
     private static ChatbotToolsController CreateController(StubMapboxClient client) => new(
         new MapboxForwardSearchTool(client),
         new MapboxCategorySearchTool(client),
-        new MapboxReverseLookupTool(client));
+        new MapboxReverseLookupTool(client),
+        new MapboxCandidateResolverTool(
+            new MapboxForwardSearchTool(client),
+            new MapboxCategorySearchTool(client)));
 
     private sealed class StubMapboxClient : IMapboxClient
     {

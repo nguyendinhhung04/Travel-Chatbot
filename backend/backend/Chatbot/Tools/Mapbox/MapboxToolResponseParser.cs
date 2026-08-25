@@ -13,8 +13,8 @@ internal static class MapboxToolResponseParser
     public static MapboxPlaceToolData ParsePlaces(string json)
     {
         using var document = JsonDocument.Parse(json);
-        var rawResponse = document.RootElement.Clone();
-        var response = rawResponse.Deserialize<FeatureCollectionResponse>(JsonOptions)
+        var providerResponse = document.RootElement.Clone();
+        var response = providerResponse.Deserialize<FeatureCollectionResponse>(JsonOptions)
                        ?? throw InvalidResponse();
 
         if (response.Features is null || string.IsNullOrWhiteSpace(response.Attribution))
@@ -23,7 +23,7 @@ internal static class MapboxToolResponseParser
         }
 
         var results = response.Features.Select(ParsePlace).ToArray();
-        return new MapboxPlaceToolData(response.Attribution, results, rawResponse);
+        return new MapboxPlaceToolData(response.Attribution, results);
     }
 
     public static MapboxPlaceToolData ParseCategoryPlaces(

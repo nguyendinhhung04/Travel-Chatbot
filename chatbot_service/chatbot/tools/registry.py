@@ -19,6 +19,8 @@ from .mapbox_client import (
 from .models import (
     ChatSource,
     MapboxCategorySearchInput,
+    MapboxCandidateResolutionData,
+    MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
@@ -39,6 +41,7 @@ logger = logging.getLogger(__name__)
 MAPBOX_FORWARD_SEARCH_TOOL_NAME = "mapbox_forward_search"
 MAPBOX_CATEGORY_SEARCH_TOOL_NAME = "mapbox_category_search"
 MAPBOX_REVERSE_LOOKUP_TOOL_NAME = "mapbox_reverse_lookup"
+MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME = "mapbox_resolve_candidates"
 UNKNOWN_TOOL_ERROR = "unknown_tool"
 INVALID_ARGUMENTS_ERROR = "invalid_arguments"
 TOOL_EXECUTION_ERROR = "tool_execution_error"
@@ -160,6 +163,17 @@ class ToolRegistry:
         tools = [
             _RegisteredTool(
                 definition=ToolDefinition(
+                    name=MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME,
+                    description=(
+                        "Xác minh theo batch các candidate do Gemini đề xuất, matching "
+                        "với Mapbox và trả dữ liệu địa điểm đã chuẩn hóa."
+                    ),
+                    input_model=MapboxCandidateResolveInput,
+                ),
+                handler=self._mapbox_client.resolve_candidates,
+            ),
+            _RegisteredTool(
+                definition=ToolDefinition(
                     name=SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
                     description=(
                         "Tra cứu Knowledge Base cho kiến thức, kinh nghiệm, "
@@ -219,6 +233,8 @@ class ToolRegistry:
             return tuple(result.data.sources)
         if isinstance(result.data, MapboxPlaceToolData):
             return (MapboxSource(attribution=result.data.attribution),)
+        if isinstance(result.data, MapboxCandidateResolutionData):
+            return (MapboxSource(attribution=result.data.attribution),)
         return ()
 
     @staticmethod
@@ -261,6 +277,7 @@ __all__ = [
     "MAPBOX_CATEGORY_SEARCH_TOOL_NAME",
     "MAPBOX_FORWARD_SEARCH_TOOL_NAME",
     "MAPBOX_REVERSE_LOOKUP_TOOL_NAME",
+    "MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME",
     "SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME",
     "TOOL_EXECUTION_ERROR",
     "ToolDefinition",

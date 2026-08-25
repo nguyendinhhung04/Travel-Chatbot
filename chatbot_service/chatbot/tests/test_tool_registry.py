@@ -26,7 +26,7 @@ class ToolRegistryTests(SimpleTestCase):
         self.mapbox_client = MagicMock()
         self.registry = ToolRegistry(self.mapbox_client)
 
-    def test_registry_exposes_exactly_four_backend_selected_tools(self):
+    def test_registry_exposes_backend_selected_tools(self):
         self.assertEqual(
             self.registry.names,
             {
@@ -34,6 +34,7 @@ class ToolRegistryTests(SimpleTestCase):
                 "mapbox_forward_search",
                 "mapbox_category_search",
                 "mapbox_reverse_lookup",
+                "mapbox_resolve_candidates",
             },
         )
         tools = {tool.name: tool for tool in self.registry.definitions}
@@ -107,11 +108,6 @@ class ToolRegistryTests(SimpleTestCase):
             data=MapboxPlaceToolData(
                 attribution="Mapbox",
                 results=[],
-                raw_response={
-                    "type": "FeatureCollection",
-                    "features": [],
-                    "attribution": "Mapbox",
-                },
             ),
         )
 
@@ -124,10 +120,7 @@ class ToolRegistryTests(SimpleTestCase):
         self.assertEqual(execution.sources[0].type, "mapbox")
         self.assertEqual(execution.sources[0].attribution, "Mapbox")
         payload = json.loads(execution.content)
-        self.assertEqual(
-            payload["data"]["rawResponse"]["type"],
-            "FeatureCollection",
-        )
+        self.assertNotIn("rawResponse", payload["data"])
         request = self.mapbox_client.forward_search.call_args.args[0]
         self.assertEqual(request.q, "coffee")
 
