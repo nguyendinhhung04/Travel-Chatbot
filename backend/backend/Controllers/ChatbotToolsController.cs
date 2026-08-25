@@ -9,9 +9,9 @@ namespace Backend.Controllers;
 [Produces("application/json")]
 public sealed class ChatbotToolsController(
     MapboxForwardSearchTool forwardSearchTool,
-    MapboxListCategoriesTool listCategoriesTool,
     MapboxCategorySearchTool categorySearchTool,
-    MapboxReverseLookupTool reverseLookupTool) : ControllerBase
+    MapboxReverseLookupTool reverseLookupTool,
+    MapboxCandidateResolverTool candidateResolverTool) : ControllerBase
 {
     [HttpPost("mapbox-forward-search")]
     [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status200OK)]
@@ -28,21 +28,6 @@ public sealed class ChatbotToolsController(
         return ToActionResult(result);
     }
 
-    [HttpPost("mapbox-list-categories")]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status502BadGateway)]
-    [ProducesResponseType<ToolResult<MapboxCategoryToolData>>(StatusCodes.Status504GatewayTimeout)]
-    public async Task<IActionResult> ListCategories(
-        [FromBody] MapboxListCategoriesToolHttpRequest request,
-        CancellationToken cancellationToken)
-    {
-        var result = await listCategoriesTool.ExecuteAsync(
-            request.Language,
-            cancellationToken);
-        return ToActionResult(result);
-    }
-
     [HttpPost("mapbox-category-search")]
     [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status400BadRequest)]
@@ -55,7 +40,8 @@ public sealed class ChatbotToolsController(
         var result = await categorySearchTool.ExecuteAsync(
             request.CategoryId ?? string.Empty,
             request.ToMapboxRequest(),
-            cancellationToken);
+            cancellationToken,
+            request.MinimumRating);
         return ToActionResult(result);
     }
 
@@ -70,6 +56,21 @@ public sealed class ChatbotToolsController(
     {
         var result = await reverseLookupTool.ExecuteAsync(
             request.ToMapboxRequest(),
+            cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("mapbox-resolve-candidates")]
+    [ProducesResponseType<ToolResult<MapboxCandidateResolutionData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxCandidateResolutionData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxCandidateResolutionData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxCandidateResolutionData>>(StatusCodes.Status504GatewayTimeout)]
+    public async Task<IActionResult> ResolveCandidates(
+        [FromBody] MapboxCandidateResolveToolHttpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await candidateResolverTool.ExecuteAsync(
+            request.ToResolutionRequest(),
             cancellationToken);
         return ToActionResult(result);
     }

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 using Backend.Mapbox;
 
@@ -56,29 +57,8 @@ public sealed record MapboxForwardSearchToolHttpRequest
     [JsonPropertyName("rank_strategy")]
     public string? RankStrategy { get; init; }
 
-    [JsonPropertyName("sar_type")]
-    public string? SarType { get; init; }
-
-    [JsonPropertyName("route")]
-    public string? Route { get; init; }
-
-    [JsonPropertyName("route_geometry")]
-    public string? RouteGeometry { get; init; }
-
-    [JsonPropertyName("time_deviation")]
-    public double? TimeDeviation { get; init; }
-
     [JsonPropertyName("auto_complete")]
     public bool? AutoComplete { get; init; }
-
-    [JsonPropertyName("eta_type")]
-    public string? EtaType { get; init; }
-
-    [JsonPropertyName("navigation_profile")]
-    public string? NavigationProfile { get; init; }
-
-    [JsonPropertyName("origin")]
-    public string? Origin { get; init; }
 
     public MapboxForwardSearchRequest ToMapboxRequest() => new()
     {
@@ -99,21 +79,8 @@ public sealed record MapboxForwardSearchToolHttpRequest
         PriceLevels = PriceLevels,
         ExcludeFields = ExcludeFields,
         RankStrategy = RankStrategy,
-        SarType = SarType,
-        Route = Route,
-        RouteGeometry = RouteGeometry,
-        TimeDeviation = TimeDeviation,
-        AutoComplete = AutoComplete,
-        EtaType = EtaType,
-        NavigationProfile = NavigationProfile,
-        Origin = Origin
+        AutoComplete = AutoComplete
     };
-}
-
-public sealed record MapboxListCategoriesToolHttpRequest
-{
-    [JsonPropertyName("language")]
-    public string? Language { get; init; }
 }
 
 public sealed record MapboxCategorySearchToolHttpRequest
@@ -154,26 +121,9 @@ public sealed record MapboxCategorySearchToolHttpRequest
     [JsonPropertyName("exclude_fields")]
     public string? ExcludeFields { get; init; }
 
-    [JsonPropertyName("sar_type")]
-    public string? SarType { get; init; }
-
-    [JsonPropertyName("route")]
-    public string? Route { get; init; }
-
-    [JsonPropertyName("route_geometry")]
-    public string? RouteGeometry { get; init; }
-
-    [JsonPropertyName("time_deviation")]
-    public double? TimeDeviation { get; init; }
-
-    [JsonPropertyName("eta_type")]
-    public string? EtaType { get; init; }
-
-    [JsonPropertyName("navigation_profile")]
-    public string? NavigationProfile { get; init; }
-
-    [JsonPropertyName("origin")]
-    public string? Origin { get; init; }
+    [JsonPropertyName("minimum_rating")]
+    [Range(0, 5)]
+    public double? MinimumRating { get; init; }
 
     public MapboxCategorySearchRequest ToMapboxRequest() => new()
     {
@@ -187,14 +137,7 @@ public sealed record MapboxCategorySearchToolHttpRequest
         Types = Types,
         PoiCategoryExclusions = PoiCategoryExclusions,
         ShowClosedPois = ShowClosedPois,
-        ExcludeFields = ExcludeFields,
-        SarType = SarType,
-        Route = Route,
-        RouteGeometry = RouteGeometry,
-        TimeDeviation = TimeDeviation,
-        EtaType = EtaType,
-        NavigationProfile = NavigationProfile,
-        Origin = Origin
+        ExcludeFields = ExcludeFields
     };
 }
 
@@ -231,4 +174,50 @@ public sealed record MapboxReverseLookupToolHttpRequest
         Types = Types,
         ShowClosedPois = ShowClosedPois
     };
+}
+
+public sealed record MapboxCandidateResolveToolHttpRequest
+{
+    [JsonPropertyName("longitude")]
+    public double? Longitude { get; init; }
+
+    [JsonPropertyName("latitude")]
+    public double? Latitude { get; init; }
+
+    [JsonPropertyName("candidates")]
+    public IReadOnlyList<MapboxCandidateHttpInput>? Candidates { get; init; }
+
+    [JsonPropertyName("categoryId")]
+    public string? CategoryId { get; init; }
+
+    [JsonPropertyName("minimumRating")]
+    public double? MinimumRating { get; init; }
+
+    public MapboxCandidateResolutionRequest ToResolutionRequest() => new(
+        Longitude ?? double.NaN,
+        Latitude ?? double.NaN,
+        (Candidates ?? []).Select(candidate => candidate.ToCandidate()).ToArray(),
+        CategoryId,
+        MinimumRating);
+}
+
+public sealed record MapboxCandidateHttpInput
+{
+    [JsonPropertyName("candidateId")]
+    public string? CandidateId { get; init; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [JsonPropertyName("aliases")]
+    public IReadOnlyList<string>? Aliases { get; init; }
+
+    [JsonPropertyName("categoryHints")]
+    public IReadOnlyList<string>? CategoryHints { get; init; }
+
+    public MapboxCandidateInput ToCandidate() => new(
+        CandidateId ?? string.Empty,
+        Name ?? string.Empty,
+        Aliases ?? [],
+        CategoryHints ?? []);
 }

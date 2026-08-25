@@ -1,4 +1,4 @@
-"""Tests for Gemini tool declarations and allowlisted execution."""
+"""Tests for backend-selected tool definitions and allowlisted execution."""
 
 import json
 from unittest.mock import MagicMock
@@ -26,45 +26,41 @@ class ToolRegistryTests(SimpleTestCase):
         self.mapbox_client = MagicMock()
         self.registry = ToolRegistry(self.mapbox_client)
 
-    def test_registry_exposes_exactly_five_typed_langchain_tools(self):
+    def test_registry_exposes_backend_selected_tools(self):
         self.assertEqual(
             self.registry.names,
             {
                 "search_travel_knowledge",
                 "mapbox_forward_search",
-                "mapbox_list_categories",
                 "mapbox_category_search",
                 "mapbox_reverse_lookup",
+                "mapbox_resolve_candidates",
             },
         )
-        tools = {tool.name: tool for tool in self.registry.langchain_tools}
+        tools = {tool.name: tool for tool in self.registry.definitions}
         self.assertEqual(set(tools), self.registry.names)
-        self.assertIn("q", tools["mapbox_forward_search"].args_schema.model_fields)
+        self.assertIn("q", tools["mapbox_forward_search"].input_model.model_fields)
         self.assertIn(
             "category_id",
-            tools["mapbox_category_search"].args_schema.model_fields,
+            tools["mapbox_category_search"].input_model.model_fields,
         )
         self.assertIn(
             "tên riêng",
             tools["mapbox_forward_search"].description,
         )
         self.assertIn(
-            "ngữ nghĩa nhu cầu",
-            tools["mapbox_list_categories"].description,
-        )
-        self.assertIn(
-            "ý định chính",
+            "category resolver",
             tools["mapbox_category_search"].description,
         )
         self.assertIn(
             "Không truyền nguyên câu hỏi tư vấn",
-            tools["mapbox_forward_search"].args_schema.model_fields[
+            tools["mapbox_forward_search"].input_model.model_fields[
                 "q"
             ].description,
         )
         self.assertIn(
-            "mapbox_list_categories gần nhất",
-            tools["mapbox_category_search"].args_schema.model_fields[
+            "category resolver",
+            tools["mapbox_category_search"].input_model.model_fields[
                 "category_id"
             ].description,
         )
@@ -112,11 +108,6 @@ class ToolRegistryTests(SimpleTestCase):
             data=MapboxPlaceToolData(
                 attribution="Mapbox",
                 results=[],
-                raw_response={
-                    "type": "FeatureCollection",
-                    "features": [],
-                    "attribution": "Mapbox",
-                },
             ),
         )
 
@@ -129,10 +120,7 @@ class ToolRegistryTests(SimpleTestCase):
         self.assertEqual(execution.sources[0].type, "mapbox")
         self.assertEqual(execution.sources[0].attribution, "Mapbox")
         payload = json.loads(execution.content)
-        self.assertEqual(
-            payload["data"]["rawResponse"]["type"],
-            "FeatureCollection",
-        )
+        self.assertNotIn("rawResponse", payload["data"])
         request = self.mapbox_client.forward_search.call_args.args[0]
         self.assertEqual(request.q, "coffee")
 

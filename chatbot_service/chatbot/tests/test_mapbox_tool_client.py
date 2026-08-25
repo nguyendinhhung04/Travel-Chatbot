@@ -13,14 +13,76 @@ from chatbot.tools.mapbox_client import (
 )
 from chatbot.tools.models import (
     MapboxCategorySearchInput,
+    MapboxCandidateInput,
+    MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
-    MapboxListCategoriesInput,
     MapboxReverseLookupInput,
 )
 
 
 class MapboxToolClientTests(SimpleTestCase):
-    def test_four_methods_post_to_expected_endpoints_with_snake_case_json(self):
+    def test_resolve_candidates_posts_batch_contract(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = (request.url.path, json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {
+                        "attribution": "Mapbox",
+                        "results": [],
+                        "additionalPlaces": [],
+                    },
+                    "errorCode": None,
+                    "errorMessage": None,
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            result = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            ).resolve_candidates(
+                MapboxCandidateResolveInput(
+                    longitude=108.44,
+                    latitude=11.94,
+                    candidates=[
+                        MapboxCandidateInput(
+                            candidateId="candidate-1",
+                            name="Hồ Xuân Hương",
+                            aliases=["Xuan Huong Lake"],
+                            categoryHints=["lake"],
+                        )
+                    ],
+                    categoryId="tourist_attraction",
+                )
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            captured,
+            (
+                "/api/chatbot/tools/mapbox-resolve-candidates",
+                {
+                    "longitude": 108.44,
+                    "latitude": 11.94,
+                    "candidates": [
+                        {
+                            "candidateId": "candidate-1",
+                            "name": "Hồ Xuân Hương",
+                            "aliases": ["Xuan Huong Lake"],
+                            "categoryHints": ["lake"],
+                        }
+                    ],
+                    "categoryId": "tourist_attraction",
+                },
+            ),
+        )
+
+    def test_three_methods_post_to_expected_endpoints_with_snake_case_json(self):
         requests: list[tuple[str, dict]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -28,8 +90,6 @@ class MapboxToolClientTests(SimpleTestCase):
             timeout = request.extensions["timeout"]
             self.assertEqual(timeout["read"], 7)
             self.assertEqual(request.headers["accept"], "application/json")
-            if request.url.path.endswith("mapbox-list-categories"):
-                return httpx.Response(200, json=CATEGORY_SUCCESS_RESPONSE)
             return httpx.Response(200, json=PLACE_SUCCESS_RESPONSE)
 
         with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
@@ -46,11 +106,11 @@ class MapboxToolClientTests(SimpleTestCase):
                     open_now=True,
                 )
             )
-            categories = client.list_categories(MapboxListCategoriesInput())
             category_search = client.category_search(
                 MapboxCategorySearchInput(
                     category_id="restaurant",
                     proximity="108.2,16.1",
+                    minimum_rating=4,
                 )
             )
             reverse = client.reverse_lookup(
@@ -62,11 +122,9 @@ class MapboxToolClientTests(SimpleTestCase):
             )
 
         self.assertTrue(forward.success)
-        self.assertTrue(categories.success)
         self.assertTrue(category_search.success)
         self.assertTrue(reverse.success)
-        self.assertEqual(forward.data.raw_response["type"], "FeatureCollection")
-        self.assertEqual(categories.data.raw_response["version"], "1")
+        self.assertEqual(forward.data.results, [])
         self.assertEqual(
             requests,
             [
@@ -74,10 +132,13 @@ class MapboxToolClientTests(SimpleTestCase):
                     "/api/chatbot/tools/mapbox-forward-search",
                     {"q": "coffee", "poi_category": "cafe", "open_now": True},
                 ),
-                ("/api/chatbot/tools/mapbox-list-categories", {}),
                 (
                     "/api/chatbot/tools/mapbox-category-search",
-                    {"proximity": "108.2,16.1", "category_id": "restaurant"},
+                    {
+                        "proximity": "108.2,16.1",
+                        "category_id": "restaurant",
+                        "minimum_rating": 4.0,
+                    },
                 ),
                 (
                     "/api/chatbot/tools/mapbox-reverse-lookup",
@@ -166,26 +227,6 @@ PLACE_SUCCESS_RESPONSE = {
     "data": {
         "attribution": "Mapbox",
         "results": [],
-        "rawResponse": {
-            "type": "FeatureCollection",
-            "features": [],
-            "attribution": "Mapbox",
-        },
-    },
-    "errorCode": None,
-    "errorMessage": None,
-}
-
-CATEGORY_SUCCESS_RESPONSE = {
-    "success": True,
-    "data": {
-        "attribution": "Mapbox",
-        "categories": [],
-        "rawResponse": {
-            "listItems": [],
-            "attribution": "Mapbox",
-            "version": "1",
-        },
     },
     "errorCode": None,
     "errorMessage": None,

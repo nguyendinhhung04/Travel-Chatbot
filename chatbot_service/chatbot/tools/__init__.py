@@ -4,11 +4,8 @@ from .mapbox_client import MapboxToolClient
 from .models import (
     ChatSource,
     KnowledgeBaseSource,
-    MapboxCategoryItem,
     MapboxCategorySearchInput,
-    MapboxCategoryToolData,
     MapboxForwardSearchInput,
-    MapboxListCategoriesInput,
     MapboxPlaceItem,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
@@ -19,16 +16,13 @@ from .models import (
     ToolResult,
 )
 from .rag_tool import search_travel_knowledge
-from .registry import ToolExecution, ToolRegistry
+from .registry import ToolDefinition, ToolExecution, ToolRegistry
 
 __all__ = [
     "ChatSource",
     "KnowledgeBaseSource",
-    "MapboxCategoryItem",
     "MapboxCategorySearchInput",
-    "MapboxCategoryToolData",
     "MapboxForwardSearchInput",
-    "MapboxListCategoriesInput",
     "MapboxToolClient",
     "MapboxPlaceItem",
     "MapboxPlaceToolData",
@@ -38,6 +32,7 @@ __all__ = [
     "RagToolData",
     "SearchTravelKnowledgeInput",
     "ToolResult",
+    "ToolDefinition",
     "ToolExecution",
     "ToolRegistry",
     "search_travel_knowledge",

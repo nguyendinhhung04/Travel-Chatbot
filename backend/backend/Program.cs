@@ -40,9 +40,9 @@ builder.Services.AddHttpClient<IMapboxClient, MapboxClient>((services, client) =
 });
 
 builder.Services.AddTransient<MapboxForwardSearchTool>();
-builder.Services.AddTransient<MapboxListCategoriesTool>();
 builder.Services.AddTransient<MapboxCategorySearchTool>();
 builder.Services.AddTransient<MapboxReverseLookupTool>();
+builder.Services.AddTransient<MapboxCandidateResolverTool>();
 
 var app = builder.Build();
 

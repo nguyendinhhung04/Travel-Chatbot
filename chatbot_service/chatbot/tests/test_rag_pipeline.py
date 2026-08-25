@@ -16,7 +16,11 @@ from chatbot.rag.rag_chain import (
     build_prompt_template,
     format_context,
 )
-from chatbot.rag.retrieval import get_retriever, retrieve_documents
+from chatbot.rag.retrieval import (
+    get_retriever,
+    normalize_destination,
+    retrieve_documents,
+)
 from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
 from chatbot.views import CHAT_SERVICE_ERROR
 
@@ -63,6 +67,26 @@ class RetrievalTests(SimpleTestCase):
             search_type="similarity_score_threshold",
             search_kwargs={"k": 3, "score_threshold": 0.5},
         )
+
+    @override_settings(RAG_RETRIEVAL_TOP_K=5, RAG_RELEVANCE_THRESHOLD=0.5)
+    def test_get_retriever_filters_by_normalized_destination(self):
+        vector_store = MagicMock()
+
+        get_retriever(vector_store=vector_store, destination="Đà Lạt")
+
+        vector_store.as_retriever.assert_called_once_with(
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": 5,
+                "score_threshold": 0.5,
+                "filter": {"destination": "da-lat"},
+            },
+        )
+
+    def test_normalize_destination_handles_vietnamese_names(self):
+        self.assertEqual(normalize_destination(" Đà Lạt "), "da-lat")
+        self.assertEqual(normalize_destination("Hội An"), "hoi-an")
+        self.assertIsNone(normalize_destination("   "))
 
     @override_settings(RAG_RETRIEVAL_TOP_K=5, RAG_RELEVANCE_THRESHOLD=0.5)
     def test_retriever_filters_scores_below_threshold_and_keeps_boundary(self):
@@ -161,7 +185,29 @@ class RAGChainTests(SimpleTestCase):
         chat_model_mock.assert_called_once_with(
             model="test-model",
             api_key="test-key",
-            temperature=0.8,
+            temperature=1.0,
+            thinking_level="medium",
+            request_timeout=60,
+            retries=2,
+        )
+
+    @patch("chatbot.rag.rag_chain.ChatGoogleGenerativeAI")
+    def test_get_chat_model_accepts_low_thinking_for_planning(self, chat_model_mock):
+        from chatbot.rag.rag_chain import get_chat_model
+
+        get_chat_model(
+            api_key="test-key",
+            model="test-model",
+            thinking_level="low",
+        )
+
+        chat_model_mock.assert_called_once_with(
+            model="test-model",
+            api_key="test-key",
+            temperature=1.0,
+            thinking_level="low",
+            request_timeout=60,
+            retries=2,
         )
 
     def test_format_context_includes_content_and_metadata(self):
@@ -184,8 +230,8 @@ class RAGChainTests(SimpleTestCase):
 
         self.assertIn("Đại Nội nằm ở thành phố Huế.", rendered)
         self.assertIn("Đại Nội ở đâu?", rendered)
-        self.assertIn("Ưu tiên sử dụng thông tin trong Context", rendered)
-        self.assertIn("có thể dùng kiến thức của mình để bổ sung", rendered)
+        self.assertIn("Ưu tiên Context", rendered)
+        self.assertIn("Có thể bổ sung kiến thức ổn định", rendered)
         self.assertIn(INSUFFICIENT_CONTEXT_MESSAGE, rendered)
         self.assertIn("sáng tạo", RAG_PROMPT)
         self.assertNotIn("ngắn gọn", RAG_PROMPT)
@@ -268,7 +314,23 @@ class ChatAPITests(SimpleTestCase):
         self,
         orchestrate_mock,
     ):
-        for payload in ({}, {"message": "   "}, {"message": 123}):
+        invalid_payloads = (
+            {},
+            {"message": "   "},
+            {"message": 123},
+            {
+                "message": "Tìm gần đây",
+                "current_location": {"longitude": 108.2},
+            },
+            {
+                "message": "Câu hỏi",
+                "history": [
+                    {"role": "user", "content": f"Tin nhắn {index}"}
+                    for index in range(13)
+                ],
+            },
+        )
+        for payload in invalid_payloads:
             with self.subTest(payload=payload):
                 response = self.client.post(
                     "/api/chat/",
@@ -355,7 +417,46 @@ class ChatAPITests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json(), {"error": CHAT_SERVICE_ERROR})
-        orchestrate_mock.assert_called_once_with("Huế có gì?")
+        orchestrate_mock.assert_called_once_with(
+            "Huế có gì?",
+            history=(),
+            current_location=None,
+        )
+
+    @patch("chatbot.views.orchestrate_chat")
+    def test_optional_history_and_location_are_forwarded_to_orchestration(
+        self,
+        orchestrate_mock,
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
+            answer="Có quán cafe phù hợp.",
+            sources=[],
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={
+                "message": "Tìm quán gần đây",
+                "history": [
+                    {"role": "user", "content": "Tôi đang ở cầu Rồng"}
+                ],
+                "current_location": {
+                    "longitude": 108.227,
+                    "latitude": 16.061,
+                    "radius_km": 1,
+                },
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        call = orchestrate_mock.call_args
+        self.assertEqual(call.args, ("Tìm quán gần đây",))
+        self.assertEqual(call.kwargs["history"][0].role, "user")
+        self.assertEqual(
+            call.kwargs["current_location"].longitude,
+            108.227,
+        )
 
 
 class AskTravelCommandTests(SimpleTestCase):

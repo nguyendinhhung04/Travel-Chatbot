@@ -8,14 +8,18 @@ namespace Backend.Chatbot.Tools.Mapbox;
 public sealed class MapboxCategorySearchTool(IMapboxClient mapboxClient)
 {
     public const string Name = "mapbox_category_search";
+    public const double DefaultMinimumRating = 4.0;
+    public const int ResultLimit = 5;
 
     [Description("Tìm POI theo category ID và toàn bộ bộ lọc Category Search được backend hỗ trợ.")]
     public Task<ToolResult<MapboxPlaceToolData>> ExecuteAsync(
-        [Description("Canonical category ID lấy từ tool mapbox_list_categories.")]
+        [Description("Canonical category ID do backend category resolver chọn từ whitelist du lịch.")]
         string categoryId,
         [Description("Các tham số lọc Mapbox Category Search.")]
         MapboxCategorySearchRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [Description("Ngưỡng rating dùng để lọc kết quả trong backend, không gửi sang Mapbox.")]
+        double? minimumRating = null)
     {
         if (string.IsNullOrWhiteSpace(categoryId))
         {
@@ -32,9 +36,21 @@ public sealed class MapboxCategorySearchTool(IMapboxClient mapboxClient)
                 validationError));
         }
 
+        var effectiveMinimumRating = minimumRating ?? DefaultMinimumRating;
+        if (!double.IsFinite(effectiveMinimumRating)
+            || effectiveMinimumRating is < 0 or > 5)
+        {
+            return Task.FromResult(ToolResult<MapboxPlaceToolData>.Failed(
+                "invalid_input",
+                "minimumRating phải nằm trong khoảng 0 đến 5."));
+        }
+
         return MapboxToolSupport.ExecuteAsync(
             token => mapboxClient.SearchCategoryAsync(categoryId, request, token),
-            MapboxToolResponseParser.ParsePlaces,
+            json => MapboxToolResponseParser.ParseCategoryPlaces(
+                json,
+                effectiveMinimumRating,
+                ResultLimit),
             cancellationToken);
     }
 }

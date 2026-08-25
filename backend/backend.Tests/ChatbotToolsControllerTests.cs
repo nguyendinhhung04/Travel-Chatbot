@@ -13,7 +13,6 @@ public sealed class ChatbotToolsControllerTests
 {
     [Theory]
     [InlineData(nameof(ChatbotToolsController.ForwardSearch), "mapbox-forward-search")]
-    [InlineData(nameof(ChatbotToolsController.ListCategories), "mapbox-list-categories")]
     [InlineData(nameof(ChatbotToolsController.CategorySearch), "mapbox-category-search")]
     [InlineData(nameof(ChatbotToolsController.ReverseLookup), "mapbox-reverse-lookup")]
     public void Actions_ExposeExpectedPostRoutes(string actionName, string route)
@@ -52,14 +51,7 @@ public sealed class ChatbotToolsControllerTests
               "price_levels": "$$",
               "exclude_fields": "reviews",
               "rank_strategy": "distance",
-              "sar_type": "isochrone",
-              "route": "encoded-route",
-              "route_geometry": "polyline6",
-              "time_deviation": 3,
-              "auto_complete": false,
-              "eta_type": "navigation",
-              "navigation_profile": "walking",
-              "origin": "108.1,16.0"
+              "auto_complete": false
             }
             """);
 
@@ -82,14 +74,7 @@ public sealed class ChatbotToolsControllerTests
         Assert.Equal("$$", request.PriceLevels);
         Assert.Equal("reviews", request.ExcludeFields);
         Assert.Equal("distance", request.RankStrategy);
-        Assert.Equal("isochrone", request.SarType);
-        Assert.Equal("encoded-route", request.Route);
-        Assert.Equal("polyline6", request.RouteGeometry);
-        Assert.Equal(3, request.TimeDeviation);
         Assert.False(request.AutoComplete);
-        Assert.Equal("navigation", request.EtaType);
-        Assert.Equal("walking", request.NavigationProfile);
-        Assert.Equal("108.1,16.0", request.Origin);
     }
 
     [Fact]
@@ -109,13 +94,7 @@ public sealed class ChatbotToolsControllerTests
               "poi_category_exclusions": "fast_food",
               "show_closed_pois": false,
               "exclude_fields": "photos",
-              "sar_type": "isochrone",
-              "route": "encoded-route",
-              "route_geometry": "polyline",
-              "time_deviation": 4,
-              "eta_type": "navigation",
-              "navigation_profile": "cycling",
-              "origin": "107.5,16.3"
+              "minimum_rating": 4.2
             }
             """);
 
@@ -133,17 +112,12 @@ public sealed class ChatbotToolsControllerTests
         Assert.Equal("fast_food", request.PoiCategoryExclusions);
         Assert.False(request.ShowClosedPois);
         Assert.Equal("photos", request.ExcludeFields);
-        Assert.Equal("isochrone", request.SarType);
-        Assert.Equal("encoded-route", request.Route);
-        Assert.Equal("polyline", request.RouteGeometry);
-        Assert.Equal(4, request.TimeDeviation);
-        Assert.Equal("navigation", request.EtaType);
-        Assert.Equal("cycling", request.NavigationProfile);
-        Assert.Equal("107.5,16.3", request.Origin);
+        Assert.Equal(4.2, httpRequest.MinimumRating);
+        Assert.DoesNotContain("minimum_rating", request.ToQueryParameters());
     }
 
     [Fact]
-    public void ReverseAndCategoryListRequests_DeserializeSnakeCase()
+    public void ReverseRequest_DeserializesSnakeCase()
     {
         var reverseHttpRequest = Deserialize<MapboxReverseLookupToolHttpRequest>("""
             {
@@ -156,7 +130,6 @@ public sealed class ChatbotToolsControllerTests
               "show_closed_pois": false
             }
             """);
-        var listRequest = Deserialize<MapboxListCategoriesToolHttpRequest>("{}");
         var reverseRequest = reverseHttpRequest.ToMapboxRequest();
 
         Assert.Equal(108.2, reverseRequest.Longitude);
@@ -166,7 +139,6 @@ public sealed class ChatbotToolsControllerTests
         Assert.Equal("VN", reverseRequest.Country);
         Assert.Equal("address,poi", reverseRequest.Types);
         Assert.False(reverseRequest.ShowClosedPois);
-        Assert.Null(listRequest.Language);
     }
 
     [Fact]
@@ -197,25 +169,6 @@ public sealed class ChatbotToolsControllerTests
         Assert.Equal("coffee", client.ForwardRequest?.PoiCategory);
         Assert.Equal(cancellationSource.Token, client.CancellationToken);
         Assert.Empty(Assert.IsType<MapboxPlaceToolData>(result.Data).Results);
-    }
-
-    [Fact]
-    public async Task ListCategories_AllowsEmptyRequestAndReturnsTypedSuccess()
-    {
-        var client = new StubMapboxClient { Response = CategoryResponse };
-        var controller = CreateController(client);
-
-        var actionResult = await controller.ListCategories(
-            new MapboxListCategoriesToolHttpRequest(),
-            CancellationToken.None);
-
-        var result = AssertObjectResult<MapboxCategoryToolData>(
-            actionResult,
-            StatusCodes.Status200OK,
-            success: true);
-        Assert.Equal("categories", client.LastCall);
-        Assert.Null(client.Language);
-        Assert.Empty(Assert.IsType<MapboxCategoryToolData>(result.Data).Categories);
     }
 
     [Fact]
@@ -347,9 +300,11 @@ public sealed class ChatbotToolsControllerTests
 
     private static ChatbotToolsController CreateController(StubMapboxClient client) => new(
         new MapboxForwardSearchTool(client),
-        new MapboxListCategoriesTool(client),
         new MapboxCategorySearchTool(client),
-        new MapboxReverseLookupTool(client));
+        new MapboxReverseLookupTool(client),
+        new MapboxCandidateResolverTool(
+            new MapboxForwardSearchTool(client),
+            new MapboxCategorySearchTool(client)));
 
     private sealed class StubMapboxClient : IMapboxClient
     {
@@ -421,13 +376,4 @@ public sealed class ChatbotToolsControllerTests
         """,
         "application/geo+json");
 
-    private static readonly MapboxRawResponse CategoryResponse = new(
-        200,
-        """
-        {
-          "listItems": [],
-          "attribution": "Mapbox"
-        }
-        """,
-        "application/json");
 }

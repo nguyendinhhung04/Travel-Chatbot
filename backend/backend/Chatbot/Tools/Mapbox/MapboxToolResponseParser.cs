@@ -13,8 +13,8 @@ internal static class MapboxToolResponseParser
     public static MapboxPlaceToolData ParsePlaces(string json)
     {
         using var document = JsonDocument.Parse(json);
-        var rawResponse = document.RootElement.Clone();
-        var response = rawResponse.Deserialize<FeatureCollectionResponse>(JsonOptions)
+        var providerResponse = document.RootElement.Clone();
+        var response = providerResponse.Deserialize<FeatureCollectionResponse>(JsonOptions)
                        ?? throw InvalidResponse();
 
         if (response.Features is null || string.IsNullOrWhiteSpace(response.Attribution))
@@ -23,32 +23,23 @@ internal static class MapboxToolResponseParser
         }
 
         var results = response.Features.Select(ParsePlace).ToArray();
-        return new MapboxPlaceToolData(response.Attribution, results, rawResponse);
+        return new MapboxPlaceToolData(response.Attribution, results);
     }
 
-    public static MapboxCategoryToolData ParseCategories(string json)
+    public static MapboxPlaceToolData ParseCategoryPlaces(
+        string json,
+        double minimumRating,
+        int resultLimit)
     {
-        using var document = JsonDocument.Parse(json);
-        var rawResponse = document.RootElement.Clone();
-        var response = rawResponse.Deserialize<CategoryListResponse>(JsonOptions)
-                       ?? throw InvalidResponse();
+        var data = ParsePlaces(json);
+        var results = data.Results
+            .Where(place => place.Rating is null || place.Rating >= minimumRating)
+            .OrderByDescending(place => place.Popularity.HasValue)
+            .ThenByDescending(place => place.Popularity)
+            .Take(resultLimit)
+            .ToArray();
 
-        if (response.ListItems is null || string.IsNullOrWhiteSpace(response.Attribution))
-        {
-            throw InvalidResponse();
-        }
-
-        var categories = response.ListItems.Select(item =>
-        {
-            if (string.IsNullOrWhiteSpace(item.CanonicalId) || string.IsNullOrWhiteSpace(item.Name))
-            {
-                throw InvalidResponse();
-            }
-
-            return new MapboxCategoryItem(item.CanonicalId, item.Name);
-        }).ToArray();
-
-        return new MapboxCategoryToolData(response.Attribution, categories, rawResponse);
+        return data with { Results = results };
     }
 
     private static MapboxPlaceItem ParsePlace(Feature feature)
@@ -93,7 +84,9 @@ internal static class MapboxToolResponseParser
             properties.PoiCategoryIds ?? [],
             properties.OperationalStatus,
             properties.Distance,
-            properties.Eta);
+            properties.Eta,
+            properties.Metadata?.Rating,
+            properties.Metadata?.Popularity);
     }
 
     private static string? FirstNotEmpty(params string?[] values) =>
@@ -166,6 +159,18 @@ internal static class MapboxToolResponseParser
 
         [JsonPropertyName("eta")]
         public double? Eta { get; init; }
+
+        [JsonPropertyName("metadata")]
+        public FeatureMetadata? Metadata { get; init; }
+    }
+
+    private sealed class FeatureMetadata
+    {
+        [JsonPropertyName("rating")]
+        public double? Rating { get; init; }
+
+        [JsonPropertyName("popularity")]
+        public double? Popularity { get; init; }
     }
 
     private sealed class Coordinates
@@ -177,21 +182,4 @@ internal static class MapboxToolResponseParser
         public double? Latitude { get; init; }
     }
 
-    private sealed class CategoryListResponse
-    {
-        [JsonPropertyName("listItems")]
-        public List<Category>? ListItems { get; init; }
-
-        [JsonPropertyName("attribution")]
-        public string? Attribution { get; init; }
-    }
-
-    private sealed class Category
-    {
-        [JsonPropertyName("canonical_id")]
-        public string? CanonicalId { get; init; }
-
-        [JsonPropertyName("name")]
-        public string? Name { get; init; }
-    }
 }

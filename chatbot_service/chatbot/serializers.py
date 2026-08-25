@@ -5,13 +5,58 @@ from collections.abc import Mapping
 from rest_framework import serializers
 
 
+class ConversationMessageSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=("user", "assistant"))
+    content = serializers.CharField(
+        allow_blank=False,
+        max_length=4000,
+        trim_whitespace=True,
+    )
+
+
+class CurrentLocationSerializer(serializers.Serializer):
+    near = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+    longitude = serializers.FloatField(
+        required=False,
+        min_value=-180,
+        max_value=180,
+    )
+    latitude = serializers.FloatField(
+        required=False,
+        min_value=-90,
+        max_value=90,
+    )
+    radius_km = serializers.FloatField(
+        required=False,
+        min_value=0.00001,
+        max_value=10,
+    )
+
+    def validate(self, attrs):
+        if ("longitude" in attrs) != ("latitude" in attrs):
+            raise serializers.ValidationError(
+                "longitude and latitude must be provided together."
+            )
+        return attrs
+
+
 class ChatRequestSerializer(serializers.Serializer):
-    """Validate a user's question before sending it to the RAG pipeline."""
+    """Validate a stateless question plus optional conversation context."""
 
     message = serializers.CharField(
         allow_blank=False,
         trim_whitespace=True,
     )
+    history = ConversationMessageSerializer(
+        many=True,
+        required=False,
+        max_length=12,
+    )
+    current_location = CurrentLocationSerializer(required=False)
 
     def to_internal_value(self, data):
         """Reject non-string messages before CharField coerces their value."""
@@ -24,4 +69,8 @@ class ChatRequestSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
-__all__ = ["ChatRequestSerializer"]
+__all__ = [
+    "ChatRequestSerializer",
+    "ConversationMessageSerializer",
+    "CurrentLocationSerializer",
+]

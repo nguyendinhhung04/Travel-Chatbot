@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -43,13 +43,6 @@ class _MapboxSearchFilters(ToolModel):
     poi_category_exclusions: NonEmptyString | None = None
     show_closed_pois: bool | None = None
     exclude_fields: NonEmptyString | None = None
-    sar_type: Literal["isochrone"] | None = None
-    route: NonEmptyString | None = None
-    route_geometry: Literal["polyline", "polyline6"] | None = None
-    time_deviation: float | None = Field(default=None, ge=0)
-    eta_type: Literal["navigation"] | None = None
-    navigation_profile: Literal["driving", "walking", "cycling"] | None = None
-    origin: NonEmptyString | None = None
 
 
 class MapboxForwardSearchInput(_MapboxSearchFilters):
@@ -68,7 +61,7 @@ class MapboxForwardSearchInput(_MapboxSearchFilters):
         default=None,
         description=(
             "Bộ lọc category chỉ dùng kèm một q là tên/địa chỉ cụ thể; với nhu cầu "
-            "gợi ý theo trải nghiệm, dùng mapbox_list_categories rồi "
+            "gợi ý theo trải nghiệm, backend sẽ dùng category resolver và "
             "mapbox_category_search."
         ),
     )
@@ -79,22 +72,16 @@ class MapboxForwardSearchInput(_MapboxSearchFilters):
     auto_complete: bool | None = None
 
 
-class MapboxListCategoriesInput(ToolModel):
-    """Arguments accepted by the Mapbox category-list typed endpoint."""
-
-    language: NonEmptyString | None = None
-
-
 class MapboxCategorySearchInput(_MapboxSearchFilters):
     """Arguments accepted by the Mapbox category-search typed endpoint."""
 
     category_id: NonEmptyString = Field(
         description=(
-            "Canonical category ID có thật trong kết quả mapbox_list_categories gần "
-            "nhất và phù hợp với ý định chính của người dùng. Không suy ra category từ "
-            "từ khóa phụ như mùa, cảm xúc hoặc tên địa danh."
+            "Canonical category ID thuộc whitelist do backend category resolver chọn "
+            "từ semantic domain. Không dùng địa danh làm category_id."
         )
     )
+    minimum_rating: float | None = Field(default=None, ge=0, le=5)
 
 
 class MapboxReverseLookupInput(ToolModel):
@@ -113,6 +100,10 @@ class SearchTravelKnowledgeInput(ToolModel):
     """Arguments accepted by the local travel-knowledge retrieval tool."""
 
     query: str = Field(min_length=1, max_length=2000)
+    destination: NonEmptyString | None = Field(
+        default=None,
+        description="Điểm đến dùng để lọc metadata của Knowledge Base.",
+    )
 
 
 class MapboxPlaceItem(ToolModel):
@@ -129,23 +120,65 @@ class MapboxPlaceItem(ToolModel):
     operational_status: str | None = Field(default=None, alias="operationalStatus")
     distance_meters: float | None = Field(default=None, alias="distanceMeters", ge=0)
     eta_minutes: float | None = Field(default=None, alias="etaMinutes", ge=0)
+    rating: float | None = Field(default=None, ge=0, le=5)
+    popularity: float | None = Field(default=None, ge=0)
 
 
 class MapboxPlaceToolData(ToolModel):
     attribution: NonEmptyString
     results: list[MapboxPlaceItem]
-    raw_response: dict[str, Any] = Field(alias="rawResponse")
 
 
-class MapboxCategoryItem(ToolModel):
-    canonical_id: NonEmptyString = Field(alias="canonicalId")
+class MapboxCandidateInput(ToolModel):
+    candidate_id: NonEmptyString = Field(alias="candidateId")
     name: NonEmptyString
+    aliases: list[NonEmptyString] = Field(default_factory=list, max_length=5)
+    category_hints: list[NonEmptyString] = Field(
+        default_factory=list,
+        alias="categoryHints",
+        max_length=5,
+    )
 
 
-class MapboxCategoryToolData(ToolModel):
+class MapboxCandidateResolveInput(ToolModel):
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    candidates: list[MapboxCandidateInput] = Field(default_factory=list, max_length=5)
+    category_id: NonEmptyString | None = Field(default=None, alias="categoryId")
+    minimum_rating: float | None = Field(
+        default=None,
+        alias="minimumRating",
+        ge=0,
+        le=5,
+    )
+
+    @model_validator(mode="after")
+    def require_candidate_or_category(self) -> MapboxCandidateResolveInput:
+        if not self.candidates and self.category_id is None:
+            raise ValueError("At least one candidate or categoryId is required.")
+        candidate_ids = [candidate.candidate_id for candidate in self.candidates]
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("candidateId values must be unique.")
+        return self
+
+
+class MapboxCandidateMatch(ToolModel):
+    candidate_id: NonEmptyString = Field(alias="candidateId")
+    status: Literal[
+        "matched",
+        "ambiguous",
+        "not_found",
+        "lookup_failed",
+        "duplicate",
+    ]
+    similarity: float | None = Field(default=None, ge=0, le=1)
+    place: MapboxPlaceItem | None = None
+
+
+class MapboxCandidateResolutionData(ToolModel):
     attribution: NonEmptyString
-    categories: list[MapboxCategoryItem]
-    raw_response: dict[str, Any] = Field(alias="rawResponse")
+    results: list[MapboxCandidateMatch]
+    additional_places: list[MapboxPlaceItem] = Field(alias="additionalPlaces")
 
 
 class ToolResult(ToolModel, Generic[ToolData]):
@@ -205,11 +238,12 @@ class RagToolData(ToolModel):
 __all__ = [
     "ChatSource",
     "KnowledgeBaseSource",
-    "MapboxCategoryItem",
     "MapboxCategorySearchInput",
-    "MapboxCategoryToolData",
+    "MapboxCandidateInput",
+    "MapboxCandidateMatch",
+    "MapboxCandidateResolutionData",
+    "MapboxCandidateResolveInput",
     "MapboxForwardSearchInput",
-    "MapboxListCategoriesInput",
     "MapboxPlaceItem",
     "MapboxPlaceToolData",
     "MapboxReverseLookupInput",

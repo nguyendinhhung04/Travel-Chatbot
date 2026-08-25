@@ -1,4 +1,4 @@
-"""Allowlisted Gemini tool declarations and execution handlers."""
+"""Allowlisted execution boundary for travel chatbot tools."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ValidationError
 
 from .mapbox_client import (
@@ -20,9 +19,9 @@ from .mapbox_client import (
 from .models import (
     ChatSource,
     MapboxCategorySearchInput,
-    MapboxCategoryToolData,
+    MapboxCandidateResolutionData,
+    MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
-    MapboxListCategoriesInput,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
     MapboxSource,
@@ -40,9 +39,9 @@ from .rag_tool import (
 logger = logging.getLogger(__name__)
 
 MAPBOX_FORWARD_SEARCH_TOOL_NAME = "mapbox_forward_search"
-MAPBOX_LIST_CATEGORIES_TOOL_NAME = "mapbox_list_categories"
 MAPBOX_CATEGORY_SEARCH_TOOL_NAME = "mapbox_category_search"
 MAPBOX_REVERSE_LOOKUP_TOOL_NAME = "mapbox_reverse_lookup"
+MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME = "mapbox_resolve_candidates"
 UNKNOWN_TOOL_ERROR = "unknown_tool"
 INVALID_ARGUMENTS_ERROR = "invalid_arguments"
 TOOL_EXECUTION_ERROR = "tool_execution_error"
@@ -62,7 +61,7 @@ SYSTEM_FAILURE_CODES = {
 
 @dataclass(frozen=True)
 class ToolExecution:
-    """Serialized tool response plus metadata needed by the orchestrator."""
+    """Serialized tool response plus metadata needed by orchestration."""
 
     content: str
     sources: tuple[ChatSource, ...]
@@ -72,15 +71,22 @@ class ToolExecution:
 
 
 @dataclass(frozen=True)
-class _RegisteredTool:
+class ToolDefinition:
+    """Public description of one backend-selected read-only tool."""
+
     name: str
     description: str
     input_model: type[BaseModel]
+
+
+@dataclass(frozen=True)
+class _RegisteredTool:
+    definition: ToolDefinition
     handler: Callable[[BaseModel], ToolResult[Any]]
 
 
 class ToolRegistry:
-    """Expose exactly the five tools allowed by the travel chatbot."""
+    """Validate and execute the four tools used by the Q&A runtime."""
 
     def __init__(
         self,
@@ -93,13 +99,10 @@ class ToolRegistry:
         self._rag_retriever = rag_retriever
         self._rag_top_k = rag_top_k
         self._tools = self._build_registered_tools()
-        self._langchain_tools = [
-            self._build_langchain_tool(tool) for tool in self._tools.values()
-        ]
 
     @property
-    def langchain_tools(self) -> list[StructuredTool]:
-        return list(self._langchain_tools)
+    def definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(tool.definition for tool in self._tools.values())
 
     @property
     def names(self) -> frozenset[str]:
@@ -120,7 +123,9 @@ class ToolRegistry:
             )
 
         try:
-            request = registered.input_model.model_validate(dict(arguments))
+            request = registered.definition.input_model.model_validate(
+                dict(arguments)
+            )
         except ValidationError as error:
             details = self._format_validation_errors(error)
             return self._failure(
@@ -157,12 +162,25 @@ class ToolRegistry:
     def _build_registered_tools(self) -> dict[str, _RegisteredTool]:
         tools = [
             _RegisteredTool(
-                name=SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
-                description=(
-                    "Tra cứu Knowledge Base du lịch nội bộ. Dùng cho lịch sử, văn hóa, "
-                    "hoạt động, kinh nghiệm, lịch trình và thông tin tư vấn du lịch."
+                definition=ToolDefinition(
+                    name=MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME,
+                    description=(
+                        "Xác minh theo batch các candidate do Gemini đề xuất, matching "
+                        "với Mapbox và trả dữ liệu địa điểm đã chuẩn hóa."
+                    ),
+                    input_model=MapboxCandidateResolveInput,
                 ),
-                input_model=SearchTravelKnowledgeInput,
+                handler=self._mapbox_client.resolve_candidates,
+            ),
+            _RegisteredTool(
+                definition=ToolDefinition(
+                    name=SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
+                    description=(
+                        "Tra cứu Knowledge Base cho kiến thức, kinh nghiệm, "
+                        "ngân sách, di chuyển và tư vấn lịch trình dạng văn bản."
+                    ),
+                    input_model=SearchTravelKnowledgeInput,
+                ),
                 handler=lambda request: search_travel_knowledge(
                     request,
                     retriever=self._rag_retriever,
@@ -170,60 +188,40 @@ class ToolRegistry:
                 ),
             ),
             _RegisteredTool(
-                name=MAPBOX_FORWARD_SEARCH_TOOL_NAME,
-                description=(
-                    "Tìm theo tên riêng, địa chỉ hoặc POI cụ thể mà người dùng đã nêu. "
-                    "Không dùng tool này cho câu hỏi gợi ý kiểu 'nên đi đâu' dựa trên "
-                    "cảm xúc, hoạt động, mùa hoặc thời điểm; trường hợp đó phải dùng "
-                    "mapbox_list_categories rồi mapbox_category_search."
+                definition=ToolDefinition(
+                    name=MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+                    description=(
+                        "Tìm tên riêng, địa chỉ hoặc POI cụ thể đã được semantic "
+                        "interpretation nhận diện."
+                    ),
+                    input_model=MapboxForwardSearchInput,
                 ),
-                input_model=MapboxForwardSearchInput,
                 handler=self._mapbox_client.forward_search,
             ),
             _RegisteredTool(
-                name=MAPBOX_LIST_CATEGORIES_TOOL_NAME,
-                description=(
-                    "Lấy danh sách canonical category ID của Mapbox để chọn loại POI theo "
-                    "ngữ nghĩa nhu cầu. Bắt buộc gọi trước mapbox_category_search cho câu "
-                    "hỏi gợi ý theo hoạt động, không khí hoặc thời điểm."
+                definition=ToolDefinition(
+                    name=MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
+                    description=(
+                        "Khám phá POI bằng canonical category ID do category resolver "
+                        "của backend chọn từ travel domain."
+                    ),
+                    input_model=MapboxCategorySearchInput,
                 ),
-                input_model=MapboxListCategoriesInput,
-                handler=self._mapbox_client.list_categories,
-            ),
-            _RegisteredTool(
-                name=MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
-                description=(
-                    "Gợi ý POI theo loại trải nghiệm và khu vực. Chọn category_id phù hợp "
-                    "với ý định chính từ kết quả mapbox_list_categories gần nhất; dùng "
-                    "near cho địa danh. Không chọn category mua sắm, thực phẩm hoặc nhà "
-                    "hàng chỉ vì câu hỏi có từ khóa phụ không liên quan."
-                ),
-                input_model=MapboxCategorySearchInput,
                 handler=self._mapbox_client.category_search,
             ),
             _RegisteredTool(
-                name=MAPBOX_REVERSE_LOOKUP_TOOL_NAME,
-                description=(
-                    "Tra cứu địa điểm hoặc địa chỉ quanh một cặp longitude, latitude. "
-                    "Chỉ dùng khi đã có tọa độ hợp lệ."
+                definition=ToolDefinition(
+                    name=MAPBOX_REVERSE_LOOKUP_TOOL_NAME,
+                    description=(
+                        "Tra cứu địa điểm hoặc địa chỉ quanh một cặp longitude, "
+                        "latitude hợp lệ."
+                    ),
+                    input_model=MapboxReverseLookupInput,
                 ),
-                input_model=MapboxReverseLookupInput,
                 handler=self._mapbox_client.reverse_lookup,
             ),
         ]
-        return {tool.name: tool for tool in tools}
-
-    def _build_langchain_tool(self, registered: _RegisteredTool) -> StructuredTool:
-        def invoke_registered_tool(**arguments: Any) -> str:
-            return self.execute(registered.name, arguments).content
-
-        return StructuredTool.from_function(
-            func=invoke_registered_tool,
-            name=registered.name,
-            description=registered.description,
-            args_schema=registered.input_model,
-            infer_schema=False,
-        )
+        return {tool.definition.name: tool for tool in tools}
 
     @staticmethod
     def _sources_for_result(
@@ -233,7 +231,9 @@ class ToolRegistry:
             return ()
         if isinstance(result.data, RagToolData):
             return tuple(result.data.sources)
-        if isinstance(result.data, (MapboxPlaceToolData, MapboxCategoryToolData)):
+        if isinstance(result.data, MapboxPlaceToolData):
+            return (MapboxSource(attribution=result.data.attribution),)
+        if isinstance(result.data, MapboxCandidateResolutionData):
             return (MapboxSource(attribution=result.data.attribution),)
         return ()
 
@@ -276,10 +276,11 @@ __all__ = [
     "INVALID_ARGUMENTS_ERROR",
     "MAPBOX_CATEGORY_SEARCH_TOOL_NAME",
     "MAPBOX_FORWARD_SEARCH_TOOL_NAME",
-    "MAPBOX_LIST_CATEGORIES_TOOL_NAME",
     "MAPBOX_REVERSE_LOOKUP_TOOL_NAME",
+    "MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME",
     "SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME",
     "TOOL_EXECUTION_ERROR",
+    "ToolDefinition",
     "ToolExecution",
     "ToolRegistry",
     "UNKNOWN_TOOL_ERROR",

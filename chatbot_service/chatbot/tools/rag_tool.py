@@ -37,6 +37,7 @@ def search_travel_knowledge(
             request.query,
             retriever=retriever,
             top_k=top_k,
+            destination=request.destination,
         )
     except Exception as error:
         logger.warning(

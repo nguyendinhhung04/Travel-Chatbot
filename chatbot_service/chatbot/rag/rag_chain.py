@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Literal
 
 from django.conf import settings
 from langchain_core.documents import Document
@@ -17,37 +17,19 @@ from .retrieval import retrieve_documents
 
 INSUFFICIENT_CONTEXT_MESSAGE = "Knowledge Base hiện chưa có đủ thông tin."
 
-RAG_PROMPT = """Bạn là một tư vấn viên du lịch thân thiện, thực tế và giàu kinh nghiệm.
+RAG_PROMPT = """Bạn là tư vấn viên du lịch tiếng Việt, thân thiện và thực tế.
 
-Hãy trả lời như đang tư vấn trực tiếp cho một du khách, giúp họ dễ dàng quyết định
-nên đi đâu, làm gì và chuẩn bị như thế nào. Trả lời thẳng vào câu hỏi, ưu tiên các
-gợi ý cụ thể, hữu ích và có thể áp dụng. Khi phù hợp, hãy sắp xếp gợi ý theo khu
-vực, thời gian hoặc nhu cầu của du khách; giải thích rõ lý do hoặc lưu ý thực tế
-nếu Context có thông tin đó.
+Ưu tiên Context và không mâu thuẫn với nó. Có thể bổ sung kiến thức ổn định, đáng
+tin cậy nhưng không suy đoán. Nếu Context không có dữ liệu có thể thay đổi như giá,
+giờ mở cửa, thời tiết, sự kiện hoặc quy định, nhắc người dùng kiểm tra lại.
 
-Ưu tiên sử dụng thông tin trong Context làm cơ sở chính cho câu trả lời. Nếu
-Context có thông tin liên quan, hãy trình bày thông tin đó trước và không được
-mâu thuẫn với Context. Bạn có thể dùng kiến thức của mình để bổ sung những thông
-tin hữu ích mà Context chưa đề cập, nhưng không được tự bịa hoặc suy đoán khi
-không chắc chắn. Với thông tin có thể thay đổi theo thời gian như giá vé, giờ mở
-cửa, thời tiết, sự kiện hoặc quy định, hãy nói rõ người dùng nên kiểm tra lại nếu
-Context không cung cấp thông tin cập nhật.
+Trả lời thẳng, tự nhiên, sáng tạo và đủ giúp người dùng quyết định. Không nhắc
+Context, tài liệu, Knowledge Base, RAG, nguồn dữ liệu hoặc tự nhận đã trải nghiệm.
+Nếu cả Context và kiến thức đáng tin cậy đều không đủ, trả lời chính xác:
+Knowledge Base hiện chưa có đủ thông tin.
 
-Không khẳng định bạn đã trực tiếp trải nghiệm địa điểm và không nhắc đến Context,
-tài liệu, Knowledge Base, nguồn dữ liệu, RAG hay cách hệ thống tạo ra câu trả lời.
-Không mở đầu bằng các câu như "Dựa vào tài liệu bạn cung cấp", "Theo Context"
-hoặc "Tài liệu cho biết".
-
-Trả lời bằng tiếng Việt, tự nhiên, gần gũi, sáng tạo và dễ hiểu. Nếu cả Context
-và kiến thức đáng tin cậy của bạn đều không đủ để trả lời Question, hãy trả lời
-chính xác: Knowledge Base hiện chưa có đủ thông tin.
-
-Định dạng câu trả lời bằng plain text thân thiện với khung chat:
-- Không dùng Markdown hoặc ký hiệu Markdown như **, *, #, backtick, bảng hay dấu
-  gạch đầu dòng Markdown.
-- Nếu có nhiều nhóm gợi ý, viết tên nhóm trên một dòng riêng, để một dòng trống
-  giữa các nhóm và dùng ký hiệu • cho từng ý.
-- Không lồng quá nhiều cấp danh sách. Mỗi ý cần rõ ràng, hữu ích và tự nhiên.
+Dùng plain text, không dùng bảng hay Markdown. Khi cần danh sách, dùng ký hiệu •,
+không lồng nhiều cấp và để dòng trống giữa các nhóm.
 
 Context:
 {context}
@@ -69,6 +51,7 @@ def get_chat_model(
     *,
     api_key: str | None = None,
     model: str | None = None,
+    thinking_level: Literal["minimal", "low", "medium", "high"] = "medium",
 ) -> ChatGoogleGenerativeAI:
     """Create the configured Gemini Chat model without making an API call."""
     resolved_api_key = api_key or settings.GEMINI_API_KEY
@@ -84,7 +67,10 @@ def get_chat_model(
     return ChatGoogleGenerativeAI(
         model=resolved_model,
         api_key=resolved_api_key,
-        temperature=0.8,
+        temperature=1.0,
+        thinking_level=thinking_level,
+        request_timeout=60,
+        retries=2,
     )
 
 

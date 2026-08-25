@@ -11,21 +11,24 @@ không tự dựng URL và không nhận Mapbox access token từ người dùng
 
 ## Chatbot tools
 
-Backend đăng ký sẵn bốn tool trong dependency injection:
+Backend đăng ký bốn Mapbox tool đọc dữ liệu trong dependency injection:
 
 - `mapbox_forward_search`
-- `mapbox_list_categories`
 - `mapbox_category_search`
 - `mapbox_reverse_lookup`
+- `mapbox_resolve_candidates`: nhận tối đa 5 candidate theo batch, xác minh,
+  matching, loại trùng và trả thêm POI theo category.
 
 Các tool hiện là typed C# handler độc lập, chưa kết nối với Gemini, Semantic Kernel hoặc
 một AI SDK cụ thể. Mỗi tool trả `ToolResult<T>` gồm `success`, `data`, `errorCode` và
 `errorMessage`.
 
-Kết quả tìm địa điểm chỉ giữ dữ liệu chatbot cần dùng: Mapbox ID, tên, loại địa điểm,
-địa chỉ, tọa độ, category, trạng thái hoạt động, khoảng cách, ETA và attribution. Tool
-danh sách category chỉ trả canonical ID, tên và attribution. Response Mapbox không được
-cache hoặc lưu lâu dài.
+Kết quả typed tool chỉ giữ dữ liệu chatbot cần dùng và không chứa raw GeoJSON:
+Mapbox ID, tên, loại địa điểm,
+địa chỉ, tọa độ, category, trạng thái hoạt động, khoảng cách, ETA và attribution.
+Category ID cho chatbot do Semantic Interpretation và category resolver phía Django
+chọn từ whitelist; không cần tải Category List trong mỗi lượt hỏi. Response Mapbox
+không được cache hoặc lưu lâu dài.
 
 Các mã lỗi tool:
 
