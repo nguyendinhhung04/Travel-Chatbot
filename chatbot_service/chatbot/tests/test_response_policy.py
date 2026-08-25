@@ -20,7 +20,7 @@ class ResponsePolicyTests(SimpleTestCase):
         self.assertIn("kiến thức ổn định", policy)
         self.assertIn("additionalMapboxPlaces để bổ sung", policy)
         self.assertIn("Chỉ đề xuất tên có trong hai danh sách", policy)
-        self.assertIn("name, categoryHints, reason và poiCategories", policy)
+        self.assertIn("khoảng cách, ETA, rating và popularity", policy)
         self.assertIn("không liệt kê máy móc", policy)
         self.assertIn("không dùng nó để", policy)
 

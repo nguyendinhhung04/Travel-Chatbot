@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stdout
 from io import StringIO
+from unittest.mock import call, patch
 
 from django.test import SimpleTestCase
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -12,6 +13,7 @@ from chatbot.orchestrator import (
     NO_TOOL_CONTEXT,
     SYSTEM_PROMPT,
     ToolInfrastructureError,
+    orchestrate_chat,
 )
 from chatbot.response_policy import (
     DESTINATION_DISCOVERY_POLICY,
@@ -33,6 +35,44 @@ from chatbot.tools.registry import ToolExecution
 
 
 class ChatOrchestratorTests(SimpleTestCase):
+    @patch("chatbot.orchestrator.ChatOrchestrator")
+    @patch("chatbot.orchestrator.DestinationCandidateGenerator")
+    @patch("chatbot.orchestrator.SemanticInterpreter")
+    @patch("chatbot.orchestrator.get_chat_model")
+    def test_default_models_split_planning_and_synthesis_thinking(
+        self,
+        get_chat_model_mock,
+        semantic_interpreter_mock,
+        candidate_generator_mock,
+        orchestrator_mock,
+    ):
+        synthesis_model = object()
+        planning_model = object()
+        registry = StubRegistry()
+        expected = object()
+        get_chat_model_mock.side_effect = [synthesis_model, planning_model]
+        orchestrator_mock.return_value.answer.return_value = expected
+
+        result = orchestrate_chat("Huế có gì?", registry=registry)
+
+        self.assertIs(result, expected)
+        self.assertEqual(
+            get_chat_model_mock.call_args_list,
+            [
+                call(thinking_level="medium"),
+                call(thinking_level="low"),
+            ],
+        )
+        semantic_interpreter_mock.assert_called_once_with(planning_model)
+        candidate_generator_mock.assert_called_once_with(planning_model)
+        orchestrator_mock.assert_called_once_with(
+            synthesis_model,
+            registry,
+            semantic_interpreter=semantic_interpreter_mock.return_value,
+            candidate_generator=candidate_generator_mock.return_value,
+            max_tool_calls=None,
+        )
+
     def test_system_prompt_preserves_q_and_a_scope_and_place_safety(self):
         self.assertIn("dữ liệu backend", SYSTEM_PROMPT)
         self.assertIn("Không tự tạo dữ liệu có thể thay đổi", SYSTEM_PROMPT)
@@ -81,9 +121,10 @@ class ChatOrchestratorTests(SimpleTestCase):
         messages = model.invocations[0]
         self.assertIsInstance(messages[0], SystemMessage)
         self.assertIn(RAG_FIRST_ADVICE_POLICY.strip(), messages[0].content)
-        self.assertIn('"primary_intent": "travel_qa"', messages[0].content)
         self.assertIn('"success": true', messages[0].content)
-        self.assertIn("=== PHÂN TÍCH BACKEND ===", messages[0].content)
+        self.assertIn("=== CÂU HỎI ===\nHuế có gì?", messages[0].content)
+        self.assertNotIn("=== PHÂN TÍCH BACKEND ===", messages[0].content)
+        self.assertNotIn('"primary_intent"', messages[0].content)
         self.assertIn("=== DỮ LIỆU BACKEND ===", messages[0].content)
         self.assertEqual(
             [message.content for message in messages if isinstance(message, HumanMessage)],
@@ -333,9 +374,9 @@ class ChatOrchestratorTests(SimpleTestCase):
             ).answer("Nội dung người dùng không được in")
 
         output = terminal_output.getvalue()
-        self.assertIn("SemanticInterpretation result:", output)
-        self.assertIn('"primary_intent": "general_chat"', output)
-        self.assertIn('"normalized_query":', output)
+        self.assertNotIn("SemanticInterpretation result:", output)
+        self.assertNotIn('"primary_intent": "general_chat"', output)
+        self.assertNotIn('"normalized_query":', output)
         self.assertIn("Gemini request messages:", output)
         self.assertIn("--- MESSAGE 1: SYSTEM ---", output)
         self.assertIn("--- MESSAGE 2: HUMAN ---", output)

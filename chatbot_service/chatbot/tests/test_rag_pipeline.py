@@ -185,7 +185,29 @@ class RAGChainTests(SimpleTestCase):
         chat_model_mock.assert_called_once_with(
             model="test-model",
             api_key="test-key",
-            temperature=0.8,
+            temperature=1.0,
+            thinking_level="medium",
+            request_timeout=60,
+            retries=2,
+        )
+
+    @patch("chatbot.rag.rag_chain.ChatGoogleGenerativeAI")
+    def test_get_chat_model_accepts_low_thinking_for_planning(self, chat_model_mock):
+        from chatbot.rag.rag_chain import get_chat_model
+
+        get_chat_model(
+            api_key="test-key",
+            model="test-model",
+            thinking_level="low",
+        )
+
+        chat_model_mock.assert_called_once_with(
+            model="test-model",
+            api_key="test-key",
+            temperature=1.0,
+            thinking_level="low",
+            request_timeout=60,
+            retries=2,
         )
 
     def test_format_context_includes_content_and_metadata(self):

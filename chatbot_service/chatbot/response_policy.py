@@ -10,8 +10,8 @@ DESTINATION_DISCOVERY_POLICY = """Chính sách evidence cho nhóm khám phá đi
   rồi additionalMapboxPlaces để bổ sung.
 - Chỉ đề xuất tên có trong hai danh sách trên. Không thêm địa điểm khác; nếu
   destinationResolved=false hoặc cả hai danh sách rỗng, nói chưa đủ dữ liệu.
-- matchedCandidates chỉ cung cấp name, categoryHints, reason và poiCategories.
-  Dùng chúng để nhận xét trải nghiệm, không suy ra địa chỉ hay metadata khác.
+- matchedCandidates cung cấp dữ liệu đã xác minh gồm tên, Mapbox ID, địa chỉ,
+  category, lý do, khoảng cách, ETA, rating và popularity. Chỉ dùng giá trị có sẵn.
 - Chọn và xếp chung các nơi phù hợp nhất; không liệt kê máy móc hoặc chia nhóm theo
   nguồn. Tổng hợp, so sánh và viết nhận định tự nhiên thay vì chép lại dữ liệu.
 - Có thể dùng kiến thức ổn định để giải thích trải nghiệm, nhưng không dùng nó để

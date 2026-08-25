@@ -103,7 +103,7 @@ class DestinationCandidateGenerator:
         *,
         interpretation: SemanticInterpretation,
         history: Sequence[ConversationMessage],
-        knowledge_result: dict[str, Any] | None,
+        knowledge_chunks: Sequence[dict[str, str]],
     ) -> DestinationCandidateSet:
         payload = {
             "question": question,
@@ -112,7 +112,7 @@ class DestinationCandidateGenerator:
                 mode="json",
                 exclude_none=True,
             ),
-            "knowledgeBaseResult": knowledge_result,
+            "knowledgeBase": list(knowledge_chunks),
         }
         messages = [
             SystemMessage(content=CANDIDATE_SYSTEM_PROMPT),
@@ -291,7 +291,7 @@ class DestinationDiscoveryPipeline:
                 question,
                 interpretation=interpretation,
                 history=history,
-                knowledge_result=self._successful_payload(rag_execution),
+                knowledge_chunks=self._knowledge_chunks(rag_execution),
             )
         except Exception as error:
             logger.warning(
@@ -446,6 +446,35 @@ class DestinationDiscoveryPipeline:
         return payload if isinstance(payload, dict) else None
 
     @staticmethod
+    def _knowledge_chunks(
+        execution: ToolExecution | None,
+    ) -> list[dict[str, str]]:
+        """Keep only useful RAG text fields for Gemini prompts."""
+        payload = DestinationDiscoveryPipeline._successful_payload(execution)
+        data = payload.get("data") if payload is not None else None
+        chunks = data.get("chunks") if isinstance(data, dict) else None
+        if not isinstance(chunks, list):
+            return []
+
+        compact_chunks: list[dict[str, str]] = []
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            content = chunk.get("content")
+            title = chunk.get("title")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            compact_chunks.append(
+                {
+                    "title": title.strip()
+                    if isinstance(title, str) and title.strip()
+                    else "Không rõ",
+                    "content": content.strip(),
+                }
+            )
+        return compact_chunks
+
+    @staticmethod
     def _build_evidence(
         *,
         rag_execution: ToolExecution | None,
@@ -462,9 +491,15 @@ class DestinationDiscoveryPipeline:
             matched_places.append(
                 {
                     "name": match.candidate.name,
+                    "mapboxId": match.place.mapbox_id,
+                    "fullAddress": match.place.full_address,
                     "categoryHints": match.candidate.category_hints,
                     "reason": match.candidate.reason,
                     "poiCategories": match.place.poi_categories,
+                    "distanceMeters": match.place.distance_meters,
+                    "etaMinutes": match.place.eta_minutes,
+                    "rating": match.place.rating,
+                    "popularity": match.place.popularity,
                 }
             )
 
@@ -479,7 +514,7 @@ class DestinationDiscoveryPipeline:
                 )
 
         return {
-            "knowledgeBase": DestinationDiscoveryPipeline._successful_payload(
+            "knowledgeBase": DestinationDiscoveryPipeline._knowledge_chunks(
                 rag_execution
             ),
             "destinationResolved": destination_resolved,

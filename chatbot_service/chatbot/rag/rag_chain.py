@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Literal
 
 from django.conf import settings
 from langchain_core.documents import Document
@@ -51,6 +51,7 @@ def get_chat_model(
     *,
     api_key: str | None = None,
     model: str | None = None,
+    thinking_level: Literal["minimal", "low", "medium", "high"] = "medium",
 ) -> ChatGoogleGenerativeAI:
     """Create the configured Gemini Chat model without making an API call."""
     resolved_api_key = api_key or settings.GEMINI_API_KEY
@@ -66,7 +67,10 @@ def get_chat_model(
     return ChatGoogleGenerativeAI(
         model=resolved_model,
         api_key=resolved_api_key,
-        temperature=0.8,
+        temperature=1.0,
+        thinking_level=thinking_level,
+        request_timeout=60,
+        retries=2,
     )
 
 

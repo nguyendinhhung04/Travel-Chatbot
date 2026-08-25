@@ -110,7 +110,6 @@ class ChatOrchestrator:
             history=history,
             current_location=current_location,
         )
-        self._print_semantic_interpretation(interpretation)
         destination_evidence: dict[str, Any] | None = None
         tool_plan = plan_tools(interpretation)
         if (
@@ -233,11 +232,7 @@ class ChatOrchestrator:
             )
         prompt_sections.extend(
             (
-                "=== PHÂN TÍCH BACKEND ===\n"
-                + interpretation.model_dump_json(
-                    exclude_none=True,
-                    indent=2,
-                ),
+                f"=== CÂU HỎI ===\n{interpretation.normalized_query}",
                 f"=== DỮ LIỆU BACKEND ===\n{evidence_content}",
             )
         )
@@ -292,19 +287,6 @@ class ChatOrchestrator:
                 f"--- MESSAGE {index}: {message.type.upper()} ---\n{content}"
             )
         output = "Gemini request messages:\n" + "\n\n".join(sections) + "\n"
-        ChatOrchestrator._print_terminal(output)
-
-    @staticmethod
-    def _print_semantic_interpretation(
-        interpretation: SemanticInterpretation,
-    ) -> None:
-        """Print only Gemini's validated semantic result, never its request."""
-        interpretation_json = json.dumps(
-            interpretation.model_dump(mode="json", exclude_none=True),
-            ensure_ascii=False,
-            indent=2,
-        )
-        output = f"SemanticInterpretation result:\n{interpretation_json}\n"
         ChatOrchestrator._print_terminal(output)
 
     @staticmethod
@@ -379,13 +361,26 @@ def orchestrate_chat(
     max_tool_calls: int | None = None,
 ) -> ChatOrchestratorResult:
     """Run one stateless request and close owned HTTP resources."""
-    active_model = chat_model or get_chat_model()
+    active_model = chat_model or get_chat_model(thinking_level="medium")
+    active_interpreter = semantic_interpreter
+    active_candidate_generator = candidate_generator
+
+    if chat_model is None and (
+        active_interpreter is None or active_candidate_generator is None
+    ):
+        planning_model = get_chat_model(thinking_level="low")
+        active_interpreter = active_interpreter or SemanticInterpreter(planning_model)
+        active_candidate_generator = (
+            active_candidate_generator
+            or DestinationCandidateGenerator(planning_model)
+        )
+
     if registry is not None:
         return ChatOrchestrator(
             active_model,
             registry,
-            semantic_interpreter=semantic_interpreter,
-            candidate_generator=candidate_generator,
+            semantic_interpreter=active_interpreter,
+            candidate_generator=active_candidate_generator,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,
@@ -398,8 +393,8 @@ def orchestrate_chat(
         return ChatOrchestrator(
             active_model,
             active_registry,
-            semantic_interpreter=semantic_interpreter,
-            candidate_generator=candidate_generator,
+            semantic_interpreter=active_interpreter,
+            candidate_generator=active_candidate_generator,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,

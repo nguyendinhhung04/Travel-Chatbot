@@ -253,7 +253,7 @@ def interpret_question(
     chat_model: Any | None = None,
 ) -> SemanticInterpretation:
     """Interpret one question without changing the current chat orchestration."""
-    model = chat_model or get_chat_model()
+    model = chat_model or get_chat_model(thinking_level="low")
     return SemanticInterpreter(model).interpret(
         question,
         history=history,

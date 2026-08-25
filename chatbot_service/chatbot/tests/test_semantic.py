@@ -1,6 +1,7 @@
 """Tests for structured semantic interpretation."""
 
 import json
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -164,6 +165,15 @@ class SemanticInterpreterTests(SimpleTestCase):
 
         self.assertEqual(result.primary_intent, TravelIntent.PLACE_SEARCH)
         self.assertEqual(len(model.structured.invocations), 1)
+
+    @patch("chatbot.semantic.get_chat_model")
+    def test_helper_uses_low_thinking_by_default(self, get_chat_model_mock):
+        model = StubChatModel(build_interpretation())
+        get_chat_model_mock.return_value = model
+
+        interpret_question("Tìm cafe")
+
+        get_chat_model_mock.assert_called_once_with(thinking_level="low")
 
     def test_prompt_keeps_semantic_and_execution_boundaries_explicit(self):
         self.assertIn("Chọn đúng một primary_intent", SEMANTIC_SYSTEM_PROMPT)

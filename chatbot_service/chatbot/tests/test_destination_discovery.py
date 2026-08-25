@@ -179,14 +179,27 @@ class CandidateGeneratorTests(SimpleTestCase):
             "Đi chơi Đà Lạt thì đi đâu?",
             interpretation=interpretation,
             history=(),
-            knowledge_result={"success": True, "data": {"chunks": []}},
+            knowledge_chunks=[
+                {
+                    "title": "Hoạt động tại Đà Lạt",
+                    "content": "Đi dạo quanh hồ vào sáng sớm.",
+                }
+            ],
         )
 
         self.assertEqual(result.candidates[0].name, "Hồ Xuân Hương")
         self.assertIs(model.schema, DestinationCandidateSet)
         self.assertEqual(model.method, "json_schema")
         payload = json.loads(structured_model.messages[1].content)
-        self.assertTrue(payload["knowledgeBaseResult"]["success"])
+        self.assertEqual(
+            payload["knowledgeBase"],
+            [
+                {
+                    "title": "Hoạt động tại Đà Lạt",
+                    "content": "Đi dạo quanh hồ vào sáng sớm.",
+                }
+            ],
+        )
 
 
 class DestinationDiscoveryPipelineTests(SimpleTestCase):
@@ -245,22 +258,67 @@ class DestinationDiscoveryPipelineTests(SimpleTestCase):
             [
                 {
                     "name": "Hồ Xuân Hương",
+                    "mapboxId": "mapbox.lake",
+                    "fullAddress": "Đà Lạt, Lâm Đồng",
                     "categoryHints": ["lake"],
                     "reason": "Biểu tượng Đà Lạt",
                     "poiCategories": ["lake"],
+                    "distanceMeters": 902.0,
+                    "etaMinutes": None,
+                    "rating": None,
+                    "popularity": None,
                 }
             ],
         )
         self.assertEqual(
             set(evidence["matchedCandidates"][0]),
-            {"name", "categoryHints", "reason", "poiCategories"},
+            {
+                "name",
+                "mapboxId",
+                "fullAddress",
+                "categoryHints",
+                "reason",
+                "poiCategories",
+                "distanceMeters",
+                "etaMinutes",
+                "rating",
+                "popularity",
+            },
         )
         self.assertEqual(
             evidence["additionalMapboxPlaces"][0]["place"]["mapboxId"],
             "mapbox.garden",
         )
+        self.assertEqual(
+            evidence["knowledgeBase"],
+            [
+                {
+                    "title": "Hoạt động du lịch tại Đà Lạt",
+                    "content": "Dành buổi sáng đi dạo quanh hồ.",
+                }
+            ],
+        )
+        self.assertEqual(
+            set(evidence["knowledgeBase"][0]),
+            {"title", "content"},
+        )
         self.assertNotIn("Địa điểm không tồn tại", final_context)
         verification_log = terminal_output.getvalue()
+        final_request_log = verification_log.split(
+            "Gemini request messages:\n",
+            1,
+        )[1].split("Gemini response:\n", 1)[0]
+        self.assertIn('"knowledgeBase": [', final_request_log)
+        self.assertIn('"title": "Hoạt động du lịch tại Đà Lạt"', final_request_log)
+        self.assertIn(
+            '"content": "Dành buổi sáng đi dạo quanh hồ."',
+            final_request_log,
+        )
+        self.assertNotIn('"source":', final_request_log)
+        self.assertNotIn('"heading":', final_request_log)
+        self.assertNotIn('"sources":', final_request_log)
+        self.assertNotIn('"errorCode":', final_request_log)
+        self.assertNotIn('"errorMessage":', final_request_log)
         self.assertEqual(
             verification_log.count("Destination verification Mapbox request:"),
             2,
@@ -422,7 +480,25 @@ class DiscoveryRegistry:
                 content=json.dumps(
                     {
                         "success": True,
-                        "data": {"chunks": [], "sources": []},
+                        "data": {
+                            "chunks": [
+                                {
+                                    "content": "  Dành buổi sáng đi dạo quanh hồ.  ",
+                                    "title": "Hoạt động du lịch tại Đà Lạt",
+                                    "source": "destinations/da-lat/activities.md",
+                                    "heading": "Đi dạo",
+                                }
+                            ],
+                            "sources": [
+                                {
+                                    "type": "knowledge_base",
+                                    "title": "Hoạt động du lịch tại Đà Lạt",
+                                    "source": "destinations/da-lat/activities.md",
+                                }
+                            ],
+                        },
+                        "errorCode": None,
+                        "errorMessage": None,
                     }
                 ),
                 sources=(),
@@ -446,6 +522,6 @@ class DiscoveryRegistry:
             )
         if arguments["q"] == "Hồ Xuân Hương":
             return mapbox_execution(
-                place("mapbox.lake", "Ho Xuan Huong", ["lake"])
+                place("mapbox.lake", "Ho Xuan Huong", ["lake"], distance=902)
             )
         return mapbox_execution()
