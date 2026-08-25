@@ -7,9 +7,16 @@ import ChatMessage from "@/components/chat-message";
 import type {
   ChatErrorResponse,
   ChatMessage as ChatMessageType,
+  ChatPlace,
   ChatSource,
   ChatSuccessResponse,
 } from "@/types/chat";
+
+type ChatWindowProps = {
+  onPlacesReceived: (places: ChatPlace[]) => void;
+  onPlaceHover: (place: ChatPlace) => void;
+  onPlaceClick: (place: ChatPlace) => void;
+};
 
 const SUGGESTIONS = [
   "Huế có những hoạt động du lịch nào?",
@@ -42,8 +49,24 @@ function isSuccessResponse(value: unknown): value is ChatSuccessResponse {
     value !== null &&
     typeof (value as ChatSuccessResponse).answer === "string" &&
     Array.isArray((value as ChatSuccessResponse).sources) &&
-    (value as ChatSuccessResponse).sources.every(isSource)
+    (value as ChatSuccessResponse).sources.every(isSource) &&
+    (!("places" in value) || isPlaceList((value as ChatSuccessResponse).places))
   );
+}
+
+function isPlace(value: unknown): value is ChatPlace {
+  if (typeof value !== "object" || value === null) return false;
+  const place = value as ChatPlace;
+  return (
+    typeof place.mapboxId === "string" &&
+    typeof place.name === "string" &&
+    Number.isFinite(place.longitude) &&
+    Number.isFinite(place.latitude)
+  );
+}
+
+function isPlaceList(value: unknown): value is ChatPlace[] {
+  return Array.isArray(value) && value.every(isPlace);
 }
 
 function getErrorMessage(value: unknown) {
@@ -59,7 +82,11 @@ function getErrorMessage(value: unknown) {
   return DEFAULT_ERROR;
 }
 
-export default function ChatWindow() {
+export default function ChatWindow({
+  onPlacesReceived,
+  onPlaceHover,
+  onPlaceClick,
+}: ChatWindowProps) {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -112,9 +139,11 @@ export default function ChatWindow() {
         role: "assistant",
         content: payload.answer,
         sources: payload.sources,
+        places: payload.places ?? [],
       };
 
       setMessages((current) => [...current, assistantMessage]);
+      onPlacesReceived(payload.places ?? []);
       setInput("");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : DEFAULT_ERROR);
@@ -146,7 +175,14 @@ export default function ChatWindow() {
             onSuggestionSelect={setInput}
           />
         ) : (
-          messages.map((message) => <ChatMessage key={message.id} message={message} />)
+          messages.map((message) => (
+            <ChatMessage
+              key={message.id}
+              message={message}
+              onPlaceHover={onPlaceHover}
+              onPlaceClick={onPlaceClick}
+            />
+          ))
         )}
         {error ? <p className="error-message" role="alert">{error}</p> : null}
         {loading ? <p className="loading-message">Đang trả lời<span className="loading-dots" aria-hidden="true">...</span></p> : null}

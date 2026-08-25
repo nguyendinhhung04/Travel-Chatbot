@@ -433,7 +433,7 @@ class DestinationDiscoveryPipeline:
                     continue
                 matched_places.append(
                     {
-                        "name": candidate.name,
+                        "name": match.place.name,
                         "mapboxId": match.place.mapbox_id,
                         "fullAddress": match.place.full_address,
                         "categoryHints": candidate.category_hints,

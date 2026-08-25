@@ -3,13 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
+import type { ChatPlace } from "@/types/chat";
 
 const VIETNAM_CENTER: [number, number] = [108.2022, 16.0544];
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
-export default function MapPanel() {
+type MapPanelProps = {
+  places: ChatPlace[];
+  activePlaceId: string | null;
+  focusRequest: { place: ChatPlace; requestId: string } | null;
+};
+
+export default function MapPanel({
+  places,
+  activePlaceId,
+  focusRequest,
+}: MapPanelProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const markersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
   const [mapState, setMapState] = useState<"loading" | "ready" | "missing-token" | "error">(
     MAPBOX_TOKEN ? "loading" : "missing-token",
   );
@@ -44,13 +56,58 @@ export default function MapPanel() {
 
     const resizeObserver = new ResizeObserver(() => map.resize());
     resizeObserver.observe(mapContainerRef.current);
+    const markers = markersRef.current;
 
     return () => {
       resizeObserver.disconnect();
+      markers.clear();
       map.remove();
       mapRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mapState !== "ready") return;
+
+    const placeIds = new Set(places.map((place) => place.mapboxId));
+    for (const [mapboxId, marker] of markersRef.current) {
+      if (!placeIds.has(mapboxId)) {
+        marker.remove();
+        markersRef.current.delete(mapboxId);
+      }
+    }
+
+    for (const place of places) {
+      if (markersRef.current.has(place.mapboxId)) continue;
+      const element = document.createElement("span");
+      element.className = "map-place-marker";
+      element.setAttribute("aria-label", place.name);
+      const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
+        .setLngLat([place.longitude, place.latitude])
+        .addTo(map);
+      markersRef.current.set(place.mapboxId, marker);
+    }
+  }, [places, mapState]);
+
+  useEffect(() => {
+    for (const [mapboxId, marker] of markersRef.current) {
+      marker.getElement().classList.toggle(
+        "map-place-marker-active",
+        mapboxId === activePlaceId,
+      );
+    }
+  }, [activePlaceId, places, mapState]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mapState !== "ready" || !focusRequest) return;
+    map.flyTo({
+      center: [focusRequest.place.longitude, focusRequest.place.latitude],
+      zoom: 14,
+      essential: true,
+    });
+  }, [focusRequest, mapState]);
 
   function resetView() {
     mapRef.current?.flyTo({ center: VIETNAM_CENTER, zoom: 5.25, essential: true });

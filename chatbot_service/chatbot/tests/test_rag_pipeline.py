@@ -21,7 +21,7 @@ from chatbot.rag.retrieval import (
     normalize_destination,
     retrieve_documents,
 )
-from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
+from chatbot.tools.models import ChatPlace, KnowledgeBaseSource, MapboxSource
 from chatbot.views import CHAT_SERVICE_ERROR
 
 
@@ -360,7 +360,11 @@ class ChatAPITests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
-            {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": []},
+            {
+                "answer": INSUFFICIENT_CONTEXT_MESSAGE,
+                "sources": [],
+                "places": [],
+            },
         )
 
     @patch("chatbot.views.orchestrate_chat")
@@ -373,6 +377,14 @@ class ChatAPITests(SimpleTestCase):
             sources=[
                 KnowledgeBaseSource(title="Huế", source="hue.md"),
                 MapboxSource(attribution="© Mapbox"),
+            ],
+            places=[
+                ChatPlace(
+                    mapboxId="mapbox.poi.hue",
+                    name="Đại Nội Huế",
+                    longitude=107.5797,
+                    latitude=16.4681,
+                )
             ],
         )
 
@@ -399,6 +411,14 @@ class ChatAPITests(SimpleTestCase):
                         "source": "Mapbox Search API",
                         "attribution": "© Mapbox",
                     },
+                ],
+                "places": [
+                    {
+                        "mapboxId": "mapbox.poi.hue",
+                        "name": "Đại Nội Huế",
+                        "longitude": 107.5797,
+                        "latitude": 16.4681,
+                    }
                 ],
             },
         )

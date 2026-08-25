@@ -105,7 +105,7 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-Response gom `answer` va danh sach `sources` (khong lap tai lieu). Cau hoi khong hop le tra `400`; loi Gemini,
+Response gom `answer`, danh sach `sources` va `places` Mapbox da xac minh (chi nhung dia diem duoc nhac trong cau tra loi). Cau hoi khong hop le tra `400`; loi Gemini,
 Embedding hoac Chroma tra `503` voi thong bao an toan.
 
 ### Intent, Semantic va Tool flow

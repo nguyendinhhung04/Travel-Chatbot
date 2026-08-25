@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import ChatWindow from "@/components/chat-window";
 import MapPanel from "@/components/map-panel";
+import type { ChatPlace } from "@/types/chat";
 
 const MIN_CHAT_WIDTH = 28;
 const MAX_CHAT_WIDTH = 55;
@@ -10,7 +11,31 @@ const MAX_CHAT_WIDTH = 55;
 export default function TravelWorkspace() {
   const [chatWidth, setChatWidth] = useState(38);
   const [isDragging, setIsDragging] = useState(false);
+  const [places, setPlaces] = useState<ChatPlace[]>([]);
+  const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{
+    place: ChatPlace;
+    requestId: string;
+  } | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+
+  function addPlaces(nextPlaces: ChatPlace[]) {
+    if (nextPlaces.length === 0) return;
+    setPlaces((current) => {
+      const byId = new Map(current.map((place) => [place.mapboxId, place]));
+      for (const place of nextPlaces) byId.set(place.mapboxId, place);
+      return [...byId.values()];
+    });
+  }
+
+  function handlePlaceHover(place: ChatPlace) {
+    setActivePlaceId(place.mapboxId);
+  }
+
+  function handlePlaceClick(place: ChatPlace) {
+    setActivePlaceId(place.mapboxId);
+    setFocusRequest({ place, requestId: crypto.randomUUID() });
+  }
 
   function updateChatWidth(clientX: number) {
     const workspace = workspaceRef.current;
@@ -43,7 +68,11 @@ export default function TravelWorkspace() {
       className={`experience-shell ${isDragging ? "experience-shell-dragging" : ""}`}
       style={{ "--chat-width": `${chatWidth}%` } as React.CSSProperties}
     >
-      <ChatWindow />
+      <ChatWindow
+        onPlacesReceived={addPlaces}
+        onPlaceHover={handlePlaceHover}
+        onPlaceClick={handlePlaceClick}
+      />
       <div
         className="workspace-divider"
         role="separator"
@@ -56,7 +85,11 @@ export default function TravelWorkspace() {
       >
         <span className="workspace-divider-grip" aria-hidden="true" />
       </div>
-      <MapPanel />
+      <MapPanel
+        places={places}
+        activePlaceId={activePlaceId}
+        focusRequest={focusRequest}
+      />
     </div>
   );
 }

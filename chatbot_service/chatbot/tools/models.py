@@ -217,6 +217,15 @@ class MapboxSource(ToolModel):
     attribution: NonEmptyString
 
 
+class ChatPlace(ToolModel):
+    """Verified Mapbox place exposed for answer highlighting and map markers."""
+
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+
 ChatSource = Annotated[
     KnowledgeBaseSource | MapboxSource,
     Field(discriminator="type"),
@@ -236,6 +245,7 @@ class RagToolData(ToolModel):
 
 
 __all__ = [
+    "ChatPlace",
     "ChatSource",
     "KnowledgeBaseSource",
     "MapboxCategorySearchInput",

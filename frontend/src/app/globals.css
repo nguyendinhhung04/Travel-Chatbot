@@ -327,6 +327,26 @@ textarea:disabled {
   white-space: pre-wrap;
 }
 
+.place-mention {
+  display: inline;
+  padding: 1px 3px;
+  color: #b94e39;
+  font: inherit;
+  font-weight: 750;
+  line-height: inherit;
+  background: rgba(231, 111, 81, 0.1);
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.place-mention:hover,
+.place-mention:focus-visible {
+  color: #9d3f2e;
+  background: rgba(231, 111, 81, 0.2);
+  outline: none;
+}
+
 .sources {
   margin-top: 14px;
   padding-top: 12px;
@@ -528,6 +548,40 @@ textarea:disabled {
   flex: 1;
   min-height: 0;
   width: 100%;
+}
+
+.map-place-marker {
+  display: block;
+  width: 9px;
+  height: 9px;
+  background: #e76f51;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  box-shadow: 0 2px 7px rgba(50, 65, 80, 0.35);
+  transition: width 0.16s ease, height 0.16s ease, background 0.16s ease,
+    border-radius 0.16s ease, transform 0.16s ease;
+}
+
+.map-place-marker-active {
+  position: relative;
+  width: 29px;
+  height: 29px;
+  background: var(--accent);
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg) translate(2px, -2px);
+  box-shadow: 0 5px 12px rgba(174, 72, 51, 0.35);
+}
+
+.map-place-marker-active::after {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border-radius: 50%;
+  content: "";
 }
 
 .map-container .mapboxgl-ctrl-top-right {

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+import unicodedata
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from django.conf import settings
@@ -26,7 +27,7 @@ from chatbot.semantic import (
 )
 from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
-from chatbot.tools.models import ChatSource
+from chatbot.tools.models import ChatPlace, ChatSource
 from chatbot.tools.registry import ToolExecution, ToolRegistry
 
 
@@ -42,6 +43,8 @@ Dùng đúng phân tích, chính sách nguồn, dữ liệu backend và lịch s
 - Lịch trình chỉ là tư vấn văn bản, không tuyên bố đã lưu hay tối ưu tuyến đường.
 - Trả lời tự nhiên, có nhận định và đủ giúp người dùng quyết định. Dùng plain text,
   không dùng bảng hoặc Markdown phức tạp.
+- Khi nhắc địa điểm có trong dữ liệu Mapbox, phải giữ nguyên trường `name` của
+  địa điểm đó; không đổi tên, dịch tên hoặc tự rút gọn tên.
 - Chọn bố cục phù hợp câu hỏi. Khi có nhiều nơi, tách từng nơi/nhóm bằng dòng trống;
   tránh khuôn lặp, nhãn thừa, câu sáo rỗng và lặp lại dữ liệu.
 """
@@ -59,6 +62,7 @@ class ChatOrchestratorResult:
     answer: str
     sources: list[ChatSource]
     interpretation: SemanticInterpretation | None = None
+    places: list[ChatPlace] = field(default_factory=list)
 
 
 class ChatOrchestrator:
@@ -146,10 +150,16 @@ class ChatOrchestrator:
         )
         response = self._invoke_ai_message(self._chat_model, messages)
         self._print_model_response(response)
+        answer = self._normalized_response_text(response)
         return ChatOrchestratorResult(
-            answer=self._normalized_response_text(response),
+            answer=answer,
             sources=sources,
             interpretation=interpretation,
+            places=self._collect_answer_places(
+                answer,
+                executions,
+                destination_evidence,
+            ),
         )
 
     def _execute_plan(
@@ -319,6 +329,105 @@ class ChatOrchestrator:
         if not normalized:
             raise RuntimeError("Gemini returned an empty answer")
         return normalized
+
+    @staticmethod
+    def _normalize_place_text(value: str) -> str:
+        return " ".join(
+            unicodedata.normalize("NFKC", value).casefold().split()
+        )
+
+    @classmethod
+    def _collect_answer_places(
+        cls,
+        answer: str,
+        executions: Sequence[ToolExecution],
+        destination_evidence: dict[str, Any] | None,
+    ) -> list[ChatPlace]:
+        """Return only verified places whose names occur in the final answer."""
+        candidates: dict[str, dict[str, Any]] = {}
+
+        def add_candidate(value: Any) -> None:
+            if not isinstance(value, dict):
+                return
+            mapbox_id = value.get("mapboxId")
+            name = value.get("name")
+            if not isinstance(mapbox_id, str) or not mapbox_id.strip():
+                return
+            if not isinstance(name, str) or not name.strip():
+                return
+            try:
+                longitude = float(value["longitude"])
+                latitude = float(value["latitude"])
+            except (KeyError, TypeError, ValueError):
+                return
+            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+                return
+
+            item = candidates.setdefault(
+                mapbox_id.strip(),
+                {
+                    "mapboxId": mapbox_id.strip(),
+                    "names": [],
+                    "longitude": longitude,
+                    "latitude": latitude,
+                },
+            )
+            clean_name = name.strip()
+            if clean_name not in item["names"]:
+                item["names"].append(clean_name)
+
+        if destination_evidence is not None:
+            for candidate in destination_evidence.get("matchedCandidates", []):
+                add_candidate(candidate)
+            for item in destination_evidence.get("additionalMapboxPlaces", []):
+                if isinstance(item, dict):
+                    add_candidate(item.get("place"))
+
+        for execution in executions:
+            if not execution.success:
+                continue
+            try:
+                payload = json.loads(execution.content)
+            except (TypeError, ValueError):
+                continue
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                continue
+            for result in data.get("results", []):
+                if not isinstance(result, dict):
+                    continue
+                add_candidate(result.get("place", result))
+            for place in data.get("additionalPlaces", []):
+                add_candidate(place)
+
+        normalized_answer = cls._normalize_place_text(answer)
+        name_to_ids: dict[str, set[str]] = {}
+        for mapbox_id, candidate in candidates.items():
+            for name in candidate["names"]:
+                name_to_ids.setdefault(cls._normalize_place_text(name), set()).add(
+                    mapbox_id
+                )
+
+        places: list[ChatPlace] = []
+        for mapbox_id, candidate in candidates.items():
+            matching_names = [
+                name
+                for name in candidate["names"]
+                if name_to_ids.get(cls._normalize_place_text(name)) == {mapbox_id}
+                and cls._normalize_place_text(name) in normalized_answer
+            ]
+            if not matching_names:
+                continue
+            display_name = max(matching_names, key=len)
+            places.append(
+                ChatPlace(
+                    mapboxId=mapbox_id,
+                    name=display_name,
+                    longitude=candidate["longitude"],
+                    latitude=candidate["latitude"],
+                )
+            )
+        return places
 
     @staticmethod
     def _collect_unique_sources(

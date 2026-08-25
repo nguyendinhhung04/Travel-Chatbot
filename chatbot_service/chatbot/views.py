@@ -53,6 +53,10 @@ class ChatAPIView(APIView):
                 "sources": [
                     source.model_dump(mode="json") for source in result.sources
                 ],
+                "places": [
+                    place.model_dump(mode="json", by_alias=True)
+                    for place in result.places
+                ],
             },
             status=status.HTTP_200_OK,
         )

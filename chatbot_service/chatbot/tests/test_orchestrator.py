@@ -82,6 +82,54 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertIn("không tuyên bố đã lưu", SYSTEM_PROMPT)
         self.assertIn("plain text", SYSTEM_PROMPT)
         self.assertIn("tránh khuôn lặp", SYSTEM_PROMPT)
+        self.assertIn("giữ nguyên trường `name`", SYSTEM_PROMPT)
+
+    def test_collect_answer_places_keeps_only_unique_mentioned_verified_places(self):
+        execution = ToolExecution(
+            content=(
+                '{"success":true,"data":{"results":['
+                '{"mapboxId":"mapbox.ho","name":"Hồ Xuân Hương",'
+                '"longitude":108.44,"latitude":11.94},'
+                '{"mapboxId":"mapbox.garden","name":"Vườn hoa thành phố",'
+                '"longitude":108.45,"latitude":11.95},'
+                '{"mapboxId":"mapbox.unmentioned","name":"Thiền Viện Trúc Lâm",'
+                '"longitude":108.46,"latitude":11.96},'
+                '{"mapboxId":"mapbox.missing-coordinate","name":"Thác Datanla",'
+                '"latitude":11.97},'
+                '{"mapboxId":"mapbox.ambiguous-a","name":"Hồ",'
+                '"longitude":108.40,"latitude":11.90},'
+                '{"mapboxId":"mapbox.ambiguous-b","name":"Hồ",'
+                '"longitude":108.41,"latitude":11.91}'
+                ']}}'
+            ),
+            sources=(),
+            success=True,
+            system_failure=False,
+        )
+
+        places = ChatOrchestrator._collect_answer_places(
+            "Nên ghé Hồ Xuân Hương. Vườn hoa thành phố cũng rất đẹp.",
+            [execution, execution],
+            None,
+        )
+
+        self.assertEqual(
+            [place.model_dump(by_alias=True) for place in places],
+            [
+                {
+                    "mapboxId": "mapbox.ho",
+                    "name": "Hồ Xuân Hương",
+                    "longitude": 108.44,
+                    "latitude": 11.94,
+                },
+                {
+                    "mapboxId": "mapbox.garden",
+                    "name": "Vườn hoa thành phố",
+                    "longitude": 108.45,
+                    "latitude": 11.95,
+                },
+            ],
+        )
 
     def test_travel_qa_executes_rag_and_sends_validated_semantics_to_model(self):
         interpretation = build_interpretation(
