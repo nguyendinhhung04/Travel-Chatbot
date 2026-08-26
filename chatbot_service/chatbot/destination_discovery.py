@@ -25,7 +25,6 @@ from chatbot.tools.registry import (
     ToolRegistry,
 )
 
-
 MAX_DESTINATION_CANDIDATES = 5
 logger = logging.getLogger(__name__)
 _CANDIDATE_RESULT_ADAPTER = TypeAdapter(
