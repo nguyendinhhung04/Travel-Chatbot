@@ -116,6 +116,23 @@ class SemanticModelTests(SimpleTestCase):
 
 
 class SemanticInterpreterTests(SimpleTestCase):
+    def test_current_location_is_hydrated_when_semantics_requests_it(self):
+        response = build_interpretation().model_copy(
+            update={
+                "location": SemanticLocation(use_current_location=True),
+            }
+        )
+        model = StubChatModel(response)
+
+        result = SemanticInterpreter(model).interpret(
+            "TĂ¬m quĂ¡n cafe gáº§n tĂ´i",
+            current_location=SemanticLocation(longitude=108.2, latitude=16.05),
+        )
+
+        self.assertTrue(result.location.use_current_location)
+        self.assertEqual(result.location.longitude, 108.2)
+        self.assertEqual(result.location.latitude, 16.05)
+
     def test_interpreter_uses_json_schema_and_serializes_history_and_location(self):
         response = build_interpretation().model_dump(mode="json")
         model = StubChatModel(response)
@@ -183,6 +200,7 @@ class SemanticInterpreterTests(SimpleTestCase):
         self.assertIn("giao thông thời gian thực", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("entities.search_target", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("location.use_current_location", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("gần nhất dùng distance", SEMANTIC_SYSTEM_PROMPT)
 
 

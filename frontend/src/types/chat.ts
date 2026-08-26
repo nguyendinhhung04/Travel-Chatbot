@@ -20,10 +20,23 @@ export type ChatPlace = {
   latitude: number;
 };
 
+export type UserLocation = {
+  longitude: number;
+  latitude: number;
+};
+
 export type ChatSuccessResponse = {
   answer: string;
   sources: ChatSource[];
   places?: ChatPlace[];
+};
+
+export type CurrentLocationToolCallResponse = {
+  type: "client_tool_call";
+  toolCall: {
+    name: "get_current_location";
+    arguments: Record<string, never>;
+  };
 };
 
 export type ChatErrorResponse = {

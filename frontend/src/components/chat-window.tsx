@@ -10,10 +10,13 @@ import type {
   ChatPlace,
   ChatSource,
   ChatSuccessResponse,
+  CurrentLocationToolCallResponse,
+  UserLocation,
 } from "@/types/chat";
 
 type ChatWindowProps = {
   onPlacesReceived: (places: ChatPlace[]) => void;
+  onCurrentLocationReceived: (location: UserLocation) => void;
   onPlaceHover: (place: ChatPlace) => void;
   onPlaceClick: (place: ChatPlace) => void;
 };
@@ -25,6 +28,8 @@ const SUGGESTIONS = [
 ];
 
 const DEFAULT_ERROR = "Không thể nhận câu trả lời. Vui lòng thử lại.";
+
+const LOCATION_ERROR = "Không thể lấy vị trí hiện tại. Hãy bật GPS và quyền vị trí rồi gửi lại câu hỏi.";
 
 function isSource(value: unknown): value is ChatSource {
   if (
@@ -51,6 +56,17 @@ function isSuccessResponse(value: unknown): value is ChatSuccessResponse {
     Array.isArray((value as ChatSuccessResponse).sources) &&
     (value as ChatSuccessResponse).sources.every(isSource) &&
     (!("places" in value) || isPlaceList((value as ChatSuccessResponse).places))
+  );
+}
+
+function isCurrentLocationToolCall(
+  value: unknown,
+): value is CurrentLocationToolCallResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const response = value as Partial<CurrentLocationToolCallResponse>;
+  return (
+    response.type === "client_tool_call" &&
+    response.toolCall?.name === "get_current_location"
   );
 }
 
@@ -84,6 +100,7 @@ function getErrorMessage(value: unknown) {
 
 export default function ChatWindow({
   onPlacesReceived,
+  onCurrentLocationReceived,
   onPlaceHover,
   onPlaceClick,
 }: ChatWindowProps) {
@@ -104,6 +121,74 @@ export default function ChatWindow({
     });
   }, [messages, loading, error]);
 
+  function getCurrentLocation(): Promise<UserLocation> {
+    if (!window.isSecureContext || !navigator.geolocation) {
+      return Promise.reject(new Error(LOCATION_ERROR));
+    }
+
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { longitude, latitude } = position.coords;
+          if (
+            !Number.isFinite(longitude) ||
+            !Number.isFinite(latitude) ||
+            longitude < -180 ||
+            longitude > 180 ||
+            latitude < -90 ||
+            latitude > 90
+          ) {
+            reject(new Error(LOCATION_ERROR));
+            return;
+          }
+          resolve({ longitude, latitude });
+        },
+        () => reject(new Error(LOCATION_ERROR)),
+        {
+          enableHighAccuracy: true,
+          timeout: 10_000,
+          maximumAge: 30_000,
+        },
+      );
+    });
+  }
+
+  async function requestChat(
+    question: string,
+    currentLocation?: UserLocation,
+  ): Promise<unknown> {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: question,
+        ...(currentLocation === undefined
+          ? {}
+          : { current_location: currentLocation }),
+      }),
+    });
+    const payload: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload));
+    }
+    return payload;
+  }
+
+  function appendAssistantAnswer(payload: ChatSuccessResponse) {
+    const assistantMessage: ChatMessageType = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: payload.answer,
+      sources: payload.sources,
+      places: payload.places ?? [],
+    };
+
+    setMessages((current) => [...current, assistantMessage]);
+    onPlacesReceived(payload.places ?? []);
+    setInput("");
+  }
+
   async function sendMessage() {
     const question = input.trim();
     if (!question || loading) return;
@@ -119,32 +204,18 @@ export default function ChatWindow({
     setLoading(true);
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: question }),
-      });
-      const payload: unknown = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload));
+      let payload = await requestChat(question);
+      if (isCurrentLocationToolCall(payload)) {
+        const currentLocation = await getCurrentLocation();
+        onCurrentLocationReceived(currentLocation);
+        payload = await requestChat(question, currentLocation);
+        if (isCurrentLocationToolCall(payload)) {
+          throw new Error(LOCATION_ERROR);
+        }
       }
 
-      if (!isSuccessResponse(payload)) {
-        throw new Error(DEFAULT_ERROR);
-      }
-
-      const assistantMessage: ChatMessageType = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: payload.answer,
-        sources: payload.sources,
-        places: payload.places ?? [],
-      };
-
-      setMessages((current) => [...current, assistantMessage]);
-      onPlacesReceived(payload.places ?? []);
-      setInput("");
+      if (!isSuccessResponse(payload)) throw new Error(DEFAULT_ERROR);
+      appendAssistantAnswer(payload);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : DEFAULT_ERROR);
     } finally {

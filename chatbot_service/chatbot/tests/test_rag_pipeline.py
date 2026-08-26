@@ -310,6 +310,35 @@ class RAGChainTests(SimpleTestCase):
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class ChatAPITests(SimpleTestCase):
     @patch("chatbot.views.orchestrate_chat")
+    def test_current_location_client_tool_call_has_explicit_shape(
+        self,
+        orchestrate_mock,
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
+            answer="",
+            sources=[],
+            client_tool_call="get_current_location",
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={"message": "TĂ¬m quĂ¡n cafe gáº§n tĂ´i"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "type": "client_tool_call",
+                "toolCall": {
+                    "name": "get_current_location",
+                    "arguments": {},
+                },
+            },
+        )
+
+    @patch("chatbot.views.orchestrate_chat")
     def test_invalid_messages_return_bad_request_without_orchestration(
         self,
         orchestrate_mock,

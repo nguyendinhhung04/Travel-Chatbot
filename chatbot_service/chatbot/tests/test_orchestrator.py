@@ -35,6 +35,45 @@ from chatbot.tools.registry import ToolExecution
 
 
 class ChatOrchestratorTests(SimpleTestCase):
+    def test_model_request_log_redacts_current_location_coordinates(self):
+        terminal_output = StringIO()
+
+        with redirect_stdout(terminal_output):
+            ChatOrchestrator._print_model_request(
+                [HumanMessage(content="near 108.2,16.05")],
+                sensitive_location=SemanticLocation(
+                    longitude=108.2,
+                    latitude=16.05,
+                ),
+            )
+
+        output = terminal_output.getvalue()
+        self.assertIn("[location-redacted]", output)
+        self.assertNotIn("108.2,16.05", output)
+
+    def test_current_location_request_returns_client_tool_call_before_tools(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_SEARCH,
+            actions=[SemanticActionType.REQUEST_CLARIFICATION],
+            status=InterpretationStatus.NEEDS_CLARIFICATION,
+            location=SemanticLocation(use_current_location=True),
+            missing_information=["current_location"],
+        )
+        registry = StubRegistry()
+        model = StubChatModel([AIMessage(content="should not be called")])
+
+        result = ChatOrchestrator(
+            model,
+            registry,
+            semantic_interpreter=StubInterpreter(interpretation),
+            max_tool_calls=4,
+        ).answer("Tìm quán cafe gần tôi")
+
+        self.assertEqual(result.client_tool_call, "get_current_location")
+        self.assertEqual(result.answer, "")
+        self.assertEqual(registry.calls, [])
+        self.assertEqual(model.invocations, [])
+
     @patch("chatbot.orchestrator.ChatOrchestrator")
     @patch("chatbot.orchestrator.DestinationCandidateGenerator")
     @patch("chatbot.orchestrator.SemanticInterpreter")

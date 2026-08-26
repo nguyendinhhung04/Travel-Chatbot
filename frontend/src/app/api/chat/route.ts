@@ -8,6 +8,10 @@ function errorResponse(error: string, status: number) {
   return Response.json(payload, { status });
 }
 
+function isCoordinate(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
+}
+
 export async function POST(request: Request) {
   let body: unknown;
 
@@ -26,6 +30,36 @@ export async function POST(request: Request) {
     return errorResponse(INVALID_MESSAGE, 400);
   }
 
+  const currentLocation =
+    typeof body === "object" && body !== null && "current_location" in body
+      ? (body as { current_location?: unknown }).current_location
+      : undefined;
+  let normalizedCurrentLocation:
+    | { longitude: number; latitude: number }
+    | undefined;
+  if (currentLocation !== undefined) {
+    if (
+      typeof currentLocation !== "object" ||
+      currentLocation === null ||
+      !isCoordinate(
+        (currentLocation as { longitude?: unknown }).longitude,
+        -180,
+        180,
+      ) ||
+      !isCoordinate(
+        (currentLocation as { latitude?: unknown }).latitude,
+        -90,
+        90,
+      )
+    ) {
+      return errorResponse("Vị trí hiện tại không hợp lệ.", 400);
+    }
+    normalizedCurrentLocation = {
+      longitude: (currentLocation as { longitude: number }).longitude,
+      latitude: (currentLocation as { latitude: number }).latitude,
+    };
+  }
+
   const backendUrl = process.env.BACKEND_URL;
   if (!backendUrl) {
     return errorResponse(CONNECTION_ERROR, 502);
@@ -35,7 +69,12 @@ export async function POST(request: Request) {
     const upstream = await fetch(`${backendUrl.replace(/\/$/, "")}/api/chat/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: message.trim() }),
+      body: JSON.stringify({
+        message: message.trim(),
+        ...(normalizedCurrentLocation === undefined
+          ? {}
+          : { current_location: normalizedCurrentLocation }),
+      }),
       cache: "no-store",
     });
 

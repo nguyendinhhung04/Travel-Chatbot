@@ -3,25 +3,28 @@
 import { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { ChatPlace } from "@/types/chat";
+import type { ChatPlace, UserLocation } from "@/types/chat";
 
 const VIETNAM_CENTER: [number, number] = [108.2022, 16.0544];
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
 type MapPanelProps = {
   places: ChatPlace[];
+  userLocation: UserLocation | null;
   activePlaceId: string | null;
   focusRequest: { place: ChatPlace; requestId: string } | null;
 };
 
 export default function MapPanel({
   places,
+  userLocation,
   activePlaceId,
   focusRequest,
 }: MapPanelProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<Map<string, mapboxgl.Marker>>(new Map());
+  const userMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const [mapState, setMapState] = useState<"loading" | "ready" | "missing-token" | "error">(
     MAPBOX_TOKEN ? "loading" : "missing-token",
   );
@@ -42,15 +45,6 @@ export default function MapPanel({
 
     mapRef.current = map;
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
-    map.addControl(
-      new mapboxgl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        trackUserLocation: true,
-        showUserHeading: true,
-      }),
-      "top-right",
-    );
-
     map.once("load", () => setMapState("ready"));
     map.on("error", () => setMapState("error"));
 
@@ -61,6 +55,8 @@ export default function MapPanel({
     return () => {
       resizeObserver.disconnect();
       markers.clear();
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -89,6 +85,31 @@ export default function MapPanel({
       markersRef.current.set(place.mapboxId, marker);
     }
   }, [places, mapState]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || mapState !== "ready" || !userLocation) return;
+
+    if (!userMarkerRef.current) {
+      const element = document.createElement("span");
+      element.className = "map-user-marker";
+      element.setAttribute("aria-label", "Vị trí hiện tại của bạn");
+      userMarkerRef.current = new mapboxgl.Marker({ element })
+        .setLngLat([userLocation.longitude, userLocation.latitude])
+        .addTo(map);
+    } else {
+      userMarkerRef.current.setLngLat([
+        userLocation.longitude,
+        userLocation.latitude,
+      ]);
+    }
+
+    map.flyTo({
+      center: [userLocation.longitude, userLocation.latitude],
+      zoom: Math.max(map.getZoom(), 13),
+      essential: true,
+    });
+  }, [userLocation, mapState]);
 
   useEffect(() => {
     for (const [mapboxId, marker] of markersRef.current) {

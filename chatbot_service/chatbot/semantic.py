@@ -81,6 +81,13 @@ class ConversationMessage(SemanticModel):
 
 
 class SemanticLocation(SemanticModel):
+    use_current_location: bool = Field(
+        default=False,
+        description=(
+            "True when the question refers to the user's current location, "
+            "such as nearby or where am I."
+        ),
+    )
     near: NonEmptyString | None = None
     longitude: float | None = Field(default=None, ge=-180, le=180)
     latitude: float | None = Field(default=None, ge=-90, le=90)
@@ -190,7 +197,9 @@ Quy tắc:
   ưu tiên phù hợp dùng relevance, không giới hạn rating dùng 0.
 - Chỉ đường, giao thông thời gian thực, thời tiết hiện tại và thao tác lưu là
   unsupported/report_unsupported. Lịch trình chỉ là tư vấn văn bản.
-- "Gần tôi" thiếu vị trí dùng needs_clarification và nêu missing_information.
+- Các câu như "gần tôi", "quanh đây", "ở đâu" đặt location.use_current_location=true.
+  Nếu current_location là null thì dùng needs_clarification và nêu
+  missing_information là "current_location"; nếu đã có thì dùng tọa độ đó để tìm kiếm.
 - Dùng history để giải tham chiếu. normalized_query phải độc lập, đúng ý và không
   tự thêm dữ kiện.
 """
@@ -240,9 +249,36 @@ class SemanticInterpreter:
             ),
         ]
         result = self._structured_model.invoke(messages)
-        if isinstance(result, SemanticInterpretation):
-            return result
-        return SemanticInterpretation.model_validate(result)
+        interpretation = (
+            result
+            if isinstance(result, SemanticInterpretation)
+            else SemanticInterpretation.model_validate(result)
+        )
+
+        location = interpretation.location
+        should_hydrate_location = (
+            location.use_current_location
+            or (
+                location.longitude is None
+                and location.latitude is None
+                and location.near is None
+                and not interpretation.entities.destinations
+            )
+        )
+        if current_location is not None and should_hydrate_location:
+            interpretation = interpretation.model_copy(
+                update={
+                    "location": location.model_copy(
+                        update={
+                            "use_current_location": True,
+                            "longitude": current_location.longitude,
+                            "latitude": current_location.latitude,
+                            "radius_km": current_location.radius_km,
+                        }
+                    )
+                }
+            )
+        return interpretation
 
 
 def interpret_question(

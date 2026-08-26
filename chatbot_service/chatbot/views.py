@@ -47,6 +47,18 @@ class ChatAPIView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        if result.client_tool_call is not None:
+            return Response(
+                {
+                    "type": "client_tool_call",
+                    "toolCall": {
+                        "name": result.client_tool_call,
+                        "arguments": {},
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
         return Response(
             {
                 "answer": result.answer,

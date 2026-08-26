@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import ChatWindow from "@/components/chat-window";
 import MapPanel from "@/components/map-panel";
-import type { ChatPlace } from "@/types/chat";
+import type { ChatPlace, UserLocation } from "@/types/chat";
 
 const MIN_CHAT_WIDTH = 28;
 const MAX_CHAT_WIDTH = 55;
@@ -12,6 +12,7 @@ export default function TravelWorkspace() {
   const [chatWidth, setChatWidth] = useState(38);
   const [isDragging, setIsDragging] = useState(false);
   const [places, setPlaces] = useState<ChatPlace[]>([]);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{
     place: ChatPlace;
@@ -70,6 +71,7 @@ export default function TravelWorkspace() {
     >
       <ChatWindow
         onPlacesReceived={addPlaces}
+        onCurrentLocationReceived={setUserLocation}
         onPlaceHover={handlePlaceHover}
         onPlaceClick={handlePlaceClick}
       />
@@ -87,6 +89,7 @@ export default function TravelWorkspace() {
       </div>
       <MapPanel
         places={places}
+        userLocation={userLocation}
         activePlaceId={activePlaceId}
         focusRequest={focusRequest}
       />

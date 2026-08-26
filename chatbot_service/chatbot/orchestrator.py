@@ -53,6 +53,9 @@ NO_TOOL_CONTEXT = "Không có dữ liệu tool cho yêu cầu này."
 
 
 
+CURRENT_LOCATION_TOOL_NAME = "get_current_location"
+
+
 class ToolInfrastructureError(RuntimeError):
     """Raised when every planned tool failed for infrastructure reasons."""
 
@@ -63,6 +66,7 @@ class ChatOrchestratorResult:
     sources: list[ChatSource]
     interpretation: SemanticInterpretation | None = None
     places: list[ChatPlace] = field(default_factory=list)
+    client_tool_call: str | None = None
 
 
 class ChatOrchestrator:
@@ -114,6 +118,19 @@ class ChatOrchestrator:
             history=history,
             current_location=current_location,
         )
+        if (
+            current_location is None
+            and (
+                interpretation.location.use_current_location
+                or "current_location" in interpretation.missing_information
+            )
+        ):
+            return ChatOrchestratorResult(
+                answer="",
+                sources=[],
+                interpretation=interpretation,
+                client_tool_call=CURRENT_LOCATION_TOOL_NAME,
+            )
         destination_evidence: dict[str, Any] | None = None
         tool_plan = plan_tools(interpretation)
         if (
@@ -148,7 +165,11 @@ class ChatOrchestrator:
             executions=executions,
             destination_evidence=destination_evidence,
         )
-        response = self._invoke_ai_message(self._chat_model, messages)
+        response = self._invoke_ai_message(
+            self._chat_model,
+            messages,
+            sensitive_location=current_location,
+        )
         self._print_model_response(response)
         answer = self._normalized_response_text(response)
         return ChatOrchestratorResult(
@@ -278,21 +299,40 @@ class ChatOrchestrator:
         )
 
     @staticmethod
-    def _invoke_ai_message(model: Any, messages: list[Any]) -> AIMessage:
-        ChatOrchestrator._print_model_request(messages)
+    def _invoke_ai_message(
+        model: Any,
+        messages: list[Any],
+        *,
+        sensitive_location: SemanticLocation | None = None,
+    ) -> AIMessage:
+        ChatOrchestrator._print_model_request(
+            messages,
+            sensitive_location=sensitive_location,
+        )
         response = model.invoke(messages)
         if not isinstance(response, AIMessage):
             raise RuntimeError("Gemini returned an unsupported response type")
         return response
 
     @staticmethod
-    def _print_model_request(messages: Sequence[Any]) -> None:
+    def _print_model_request(
+        messages: Sequence[Any],
+        *,
+        sensitive_location: SemanticLocation | None = None,
+    ) -> None:
         """Print message roles and content without LangChain metadata escaping."""
         sections: list[str] = []
         for index, message in enumerate(messages, start=1):
             content = message.content
             if not isinstance(content, str):
                 content = json.dumps(content, ensure_ascii=False, indent=2)
+            if sensitive_location is not None:
+                for coordinate in (
+                    sensitive_location.longitude,
+                    sensitive_location.latitude,
+                ):
+                    if coordinate is not None:
+                        content = content.replace(str(coordinate), "[location-redacted]")
             sections.append(
                 f"--- MESSAGE {index}: {message.type.upper()} ---\n{content}"
             )
@@ -515,6 +555,7 @@ def orchestrate_chat(
 __all__ = [
     "ChatOrchestrator",
     "ChatOrchestratorResult",
+    "CURRENT_LOCATION_TOOL_NAME",
     "NO_TOOL_CONTEXT",
     "SYSTEM_PROMPT",
     "ToolInfrastructureError",
