@@ -14,10 +14,10 @@ public sealed class ChatbotToolsController(
     MapboxCandidateResolverTool candidateResolverTool) : ControllerBase
 {
     [HttpPost("mapbox-forward-search")]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status502BadGateway)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status504GatewayTimeout)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status504GatewayTimeout)]
     public async Task<IActionResult> ForwardSearch(
         [FromBody] MapboxForwardSearchToolHttpRequest request,
         CancellationToken cancellationToken)
@@ -25,14 +25,14 @@ public sealed class ChatbotToolsController(
         var result = await forwardSearchTool.ExecuteAsync(
             request.ToMapboxRequest(),
             cancellationToken);
-        return ToActionResult(result);
+        return ToActionResult(ToSummaryResult(result));
     }
 
     [HttpPost("mapbox-category-search")]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status502BadGateway)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status504GatewayTimeout)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status504GatewayTimeout)]
     public async Task<IActionResult> CategorySearch(
         [FromBody] MapboxCategorySearchToolHttpRequest request,
         CancellationToken cancellationToken)
@@ -42,14 +42,14 @@ public sealed class ChatbotToolsController(
             request.ToMapboxRequest(),
             cancellationToken,
             request.MinimumRating);
-        return ToActionResult(result);
+        return ToActionResult(ToSummaryResult(result));
     }
 
     [HttpPost("mapbox-reverse-lookup")]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status502BadGateway)]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status504GatewayTimeout)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status504GatewayTimeout)]
     public async Task<IActionResult> ReverseLookup(
         [FromBody] MapboxReverseLookupToolHttpRequest request,
         CancellationToken cancellationToken)
@@ -57,7 +57,7 @@ public sealed class ChatbotToolsController(
         var result = await reverseLookupTool.ExecuteAsync(
             request.ToMapboxRequest(),
             cancellationToken);
-        return ToActionResult(result);
+        return ToActionResult(ToSummaryResult(result));
     }
 
     [HttpPost("mapbox-resolve-candidates")]
@@ -87,5 +87,19 @@ public sealed class ChatbotToolsController(
             };
 
         return StatusCode(statusCode, result);
+    }
+
+    private static ToolResult<MapboxPlaceSummaryData> ToSummaryResult(
+        ToolResult<MapboxPlaceToolData> result)
+    {
+        if (result.Success && result.Data is not null)
+        {
+            return ToolResult<MapboxPlaceSummaryData>.Succeeded(
+                MapboxPlaceSummaryData.From(result.Data));
+        }
+
+        return ToolResult<MapboxPlaceSummaryData>.Failed(
+            result.ErrorCode ?? "mapbox_invalid_response",
+            result.ErrorMessage ?? "Mapbox tool trả về dữ liệu không hợp lệ.");
     }
 }

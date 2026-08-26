@@ -105,7 +105,7 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-Response gom `answer` va danh sach `sources` (khong lap tai lieu). Cau hoi khong hop le tra `400`; loi Gemini,
+Response gom `answer`, danh sach `sources` va `places` Mapbox da xac minh (chi nhung dia diem duoc nhac trong cau tra loi). Cau hoi khong hop le tra `400`; loi Gemini,
 Embedding hoac Chroma tra `503` voi thong bao an toan.
 
 ### Intent, Semantic va Tool flow
@@ -117,7 +117,11 @@ Moi request duoc xu ly theo thu tu:
 3. `CategoryResolver` anh xa travel domain sang canonical Mapbox category trong whitelist.
 4. Voi destination discovery, Gemini tao candidate; ASP.NET xac minh ca batch,
    matching, loai trung va chi tra DTO da chuan hoa.
-5. Django dua evidence da xac minh cho Gemini tong hop cau tra loi.
+5. Django dua evidence da xac minh cho Gemini tong hop cau tra loi. Nhanh thong
+   thuong gom du lieu thanh `knowledgeBase` va `mapbox`; ket qua tim anchor nam trong
+   `mapbox.destinationLocations`, con dia diem duoc phep de xuat nam trong
+   `mapbox.places`. Nhanh destination discovery giu nguyen `destinationResolved`,
+   `matchedCandidates` va `additionalMapboxPlaces`.
 
 Bo runtime tool gom:
 

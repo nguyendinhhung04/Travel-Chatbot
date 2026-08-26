@@ -16,6 +16,17 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Mapbox
+
+Mở `frontend/.env` (hoặc tạo từ `.env.example`), sau đó thêm public access token của Mapbox:
+
+```bash
+BACKEND_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=pk.your_public_mapbox_token
+```
+
+Khởi động lại `npm run dev` sau khi đổi biến môi trường. Bản đồ hiện là bản đồ tương tác độc lập; marker từ câu trả lời chatbot sẽ được nối ở bước tiếp theo.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

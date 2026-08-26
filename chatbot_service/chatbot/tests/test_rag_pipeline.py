@@ -21,7 +21,7 @@ from chatbot.rag.retrieval import (
     normalize_destination,
     retrieve_documents,
 )
-from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
+from chatbot.tools.models import ChatPlace, KnowledgeBaseSource, MapboxSource
 from chatbot.views import CHAT_SERVICE_ERROR
 
 
@@ -310,6 +310,35 @@ class RAGChainTests(SimpleTestCase):
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class ChatAPITests(SimpleTestCase):
     @patch("chatbot.views.orchestrate_chat")
+    def test_current_location_client_tool_call_has_explicit_shape(
+        self,
+        orchestrate_mock,
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
+            answer="",
+            sources=[],
+            client_tool_call="get_current_location",
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={"message": "TĂ¬m quĂ¡n cafe gáº§n tĂ´i"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "type": "client_tool_call",
+                "toolCall": {
+                    "name": "get_current_location",
+                    "arguments": {},
+                },
+            },
+        )
+
+    @patch("chatbot.views.orchestrate_chat")
     def test_invalid_messages_return_bad_request_without_orchestration(
         self,
         orchestrate_mock,
@@ -360,7 +389,11 @@ class ChatAPITests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
-            {"answer": INSUFFICIENT_CONTEXT_MESSAGE, "sources": []},
+            {
+                "answer": INSUFFICIENT_CONTEXT_MESSAGE,
+                "sources": [],
+                "places": [],
+            },
         )
 
     @patch("chatbot.views.orchestrate_chat")
@@ -373,6 +406,14 @@ class ChatAPITests(SimpleTestCase):
             sources=[
                 KnowledgeBaseSource(title="Huế", source="hue.md"),
                 MapboxSource(attribution="© Mapbox"),
+            ],
+            places=[
+                ChatPlace(
+                    mapboxId="mapbox.poi.hue",
+                    name="Đại Nội Huế",
+                    longitude=107.5797,
+                    latitude=16.4681,
+                )
             ],
         )
 
@@ -399,6 +440,14 @@ class ChatAPITests(SimpleTestCase):
                         "source": "Mapbox Search API",
                         "attribution": "© Mapbox",
                     },
+                ],
+                "places": [
+                    {
+                        "mapboxId": "mapbox.poi.hue",
+                        "name": "Đại Nội Huế",
+                        "longitude": 107.5797,
+                        "latitude": 16.4681,
+                    }
                 ],
             },
         )

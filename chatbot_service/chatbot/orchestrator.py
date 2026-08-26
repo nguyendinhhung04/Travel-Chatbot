@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+import unicodedata
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from django.conf import settings
@@ -26,7 +27,7 @@ from chatbot.semantic import (
 )
 from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
-from chatbot.tools.models import ChatSource
+from chatbot.tools.models import ChatPlace, ChatSource
 from chatbot.tools.registry import ToolExecution, ToolRegistry
 
 
@@ -42,12 +43,17 @@ Dùng đúng phân tích, chính sách nguồn, dữ liệu backend và lịch s
 - Lịch trình chỉ là tư vấn văn bản, không tuyên bố đã lưu hay tối ưu tuyến đường.
 - Trả lời tự nhiên, có nhận định và đủ giúp người dùng quyết định. Dùng plain text,
   không dùng bảng hoặc Markdown phức tạp.
+- Khi nhắc địa điểm có trong dữ liệu Mapbox, phải giữ nguyên trường `name` của
+  địa điểm đó; không đổi tên, dịch tên hoặc tự rút gọn tên.
 - Chọn bố cục phù hợp câu hỏi. Khi có nhiều nơi, tách từng nơi/nhóm bằng dòng trống;
   tránh khuôn lặp, nhãn thừa, câu sáo rỗng và lặp lại dữ liệu.
 """
 
 NO_TOOL_CONTEXT = "Không có dữ liệu tool cho yêu cầu này."
 
+
+
+CURRENT_LOCATION_TOOL_NAME = "get_current_location"
 
 
 class ToolInfrastructureError(RuntimeError):
@@ -59,6 +65,8 @@ class ChatOrchestratorResult:
     answer: str
     sources: list[ChatSource]
     interpretation: SemanticInterpretation | None = None
+    places: list[ChatPlace] = field(default_factory=list)
+    client_tool_call: str | None = None
 
 
 class ChatOrchestrator:
@@ -110,6 +118,19 @@ class ChatOrchestrator:
             history=history,
             current_location=current_location,
         )
+        if (
+            current_location is None
+            and (
+                interpretation.location.use_current_location
+                or "current_location" in interpretation.missing_information
+            )
+        ):
+            return ChatOrchestratorResult(
+                answer="",
+                sources=[],
+                interpretation=interpretation,
+                client_tool_call=CURRENT_LOCATION_TOOL_NAME,
+            )
         destination_evidence: dict[str, Any] | None = None
         tool_plan = plan_tools(interpretation)
         if (
@@ -144,12 +165,22 @@ class ChatOrchestrator:
             executions=executions,
             destination_evidence=destination_evidence,
         )
-        response = self._invoke_ai_message(self._chat_model, messages)
+        response = self._invoke_ai_message(
+            self._chat_model,
+            messages,
+            sensitive_location=current_location,
+        )
         self._print_model_response(response)
+        answer = self._normalized_response_text(response)
         return ChatOrchestratorResult(
-            answer=self._normalized_response_text(response),
+            answer=answer,
             sources=sources,
             interpretation=interpretation,
+            places=self._collect_answer_places(
+                answer,
+                executions,
+                destination_evidence,
+            ),
         )
 
     def _execute_plan(
@@ -210,7 +241,7 @@ class ChatOrchestrator:
         destination_evidence: dict[str, Any] | None = None,
     ) -> list[Any]:
         if destination_evidence is None:
-            evidence_content = ChatOrchestrator._tool_context_content(
+            evidence_content = ChatOrchestrator._ordinary_evidence_content(
                 planned_calls,
                 executions,
             )
@@ -248,19 +279,83 @@ class ChatOrchestrator:
         return messages
 
     @staticmethod
-    def _tool_context_content(
+    def _ordinary_evidence_content(
         calls: Sequence[PlannedToolCall],
         executions: Sequence[ToolExecution],
     ) -> str:
         if not calls:
             return NO_TOOL_CONTEXT
-        payload = [
-            {
-                "tool": call.name,
-                "result": json.loads(execution.content),
-            }
+
+        payload: dict[str, Any] = {"knowledgeBase": []}
+        mapbox_calls = [
+            (call, execution)
             for call, execution in zip(calls, executions, strict=True)
+            if call.name.startswith("mapbox_")
         ]
+        if mapbox_calls:
+            payload["mapbox"] = {
+                "success": all(execution.success for _, execution in mapbox_calls),
+                "destinationLocations": [],
+                "places": [],
+            }
+
+        errors: list[dict[str, str]] = []
+        for call, execution in zip(calls, executions, strict=True):
+            try:
+                result = json.loads(execution.content)
+            except (TypeError, json.JSONDecodeError):
+                result = {}
+
+            if not execution.success:
+                error_code = execution.error_code or result.get("errorCode")
+                error: dict[str, str] = {"tool": call.name}
+                if isinstance(error_code, str) and error_code:
+                    error["errorCode"] = error_code
+                errors.append(error)
+                continue
+
+            data = result.get("data")
+            if not isinstance(data, dict):
+                continue
+
+            if call.name == "search_travel_knowledge":
+                chunks = data.get("chunks")
+                if not isinstance(chunks, list):
+                    continue
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    title = chunk.get("title")
+                    content = chunk.get("content")
+                    if isinstance(title, str) and isinstance(content, str):
+                        payload["knowledgeBase"].append(
+                            {"title": title, "content": content}
+                        )
+                continue
+
+            if not call.name.startswith("mapbox_"):
+                continue
+            results = data.get("results")
+            if not isinstance(results, list):
+                continue
+
+            target = (
+                payload["mapbox"]["destinationLocations"]
+                if call.evidence_kind == "destination_location"
+                else payload["mapbox"]["places"]
+            )
+            for place in results:
+                compact_place = ChatOrchestrator._compact_mapbox_place(
+                    place,
+                    destination_location=(
+                        call.evidence_kind == "destination_location"
+                    ),
+                )
+                if compact_place is not None:
+                    target.append(compact_place)
+
+        if errors:
+            payload["errors"] = errors
         return json.dumps(
             payload,
             ensure_ascii=False,
@@ -268,21 +363,70 @@ class ChatOrchestrator:
         )
 
     @staticmethod
-    def _invoke_ai_message(model: Any, messages: list[Any]) -> AIMessage:
-        ChatOrchestrator._print_model_request(messages)
+    def _compact_mapbox_place(
+        place: Any,
+        *,
+        destination_location: bool,
+    ) -> dict[str, Any] | None:
+        if not isinstance(place, dict):
+            return None
+        required_fields = ("mapboxId", "name", "longitude", "latitude")
+        if any(place.get(field) is None for field in required_fields):
+            return None
+
+        compact = {field: place[field] for field in required_fields}
+        if destination_location:
+            return compact
+
+        optional_fields = (
+            "fullAddress",
+            "poiCategories",
+            "operationalStatus",
+            "distanceMeters",
+            "etaMinutes",
+            "rating",
+        )
+        for field in optional_fields:
+            value = place.get(field)
+            if value is not None and value != []:
+                compact[field] = value
+        return compact
+
+    @staticmethod
+    def _invoke_ai_message(
+        model: Any,
+        messages: list[Any],
+        *,
+        sensitive_location: SemanticLocation | None = None,
+    ) -> AIMessage:
+        ChatOrchestrator._print_model_request(
+            messages,
+            sensitive_location=sensitive_location,
+        )
         response = model.invoke(messages)
         if not isinstance(response, AIMessage):
             raise RuntimeError("Gemini returned an unsupported response type")
         return response
 
     @staticmethod
-    def _print_model_request(messages: Sequence[Any]) -> None:
+    def _print_model_request(
+        messages: Sequence[Any],
+        *,
+        sensitive_location: SemanticLocation | None = None,
+    ) -> None:
         """Print message roles and content without LangChain metadata escaping."""
         sections: list[str] = []
         for index, message in enumerate(messages, start=1):
             content = message.content
             if not isinstance(content, str):
                 content = json.dumps(content, ensure_ascii=False, indent=2)
+            if sensitive_location is not None:
+                for coordinate in (
+                    sensitive_location.longitude,
+                    sensitive_location.latitude,
+                ):
+                    if coordinate is not None:
+                        content = content.replace(str(coordinate), "[location-redacted]")
             sections.append(
                 f"--- MESSAGE {index}: {message.type.upper()} ---\n{content}"
             )
@@ -319,6 +463,105 @@ class ChatOrchestrator:
         if not normalized:
             raise RuntimeError("Gemini returned an empty answer")
         return normalized
+
+    @staticmethod
+    def _normalize_place_text(value: str) -> str:
+        return " ".join(
+            unicodedata.normalize("NFKC", value).casefold().split()
+        )
+
+    @classmethod
+    def _collect_answer_places(
+        cls,
+        answer: str,
+        executions: Sequence[ToolExecution],
+        destination_evidence: dict[str, Any] | None,
+    ) -> list[ChatPlace]:
+        """Return only verified places whose names occur in the final answer."""
+        candidates: dict[str, dict[str, Any]] = {}
+
+        def add_candidate(value: Any) -> None:
+            if not isinstance(value, dict):
+                return
+            mapbox_id = value.get("mapboxId")
+            name = value.get("name")
+            if not isinstance(mapbox_id, str) or not mapbox_id.strip():
+                return
+            if not isinstance(name, str) or not name.strip():
+                return
+            try:
+                longitude = float(value["longitude"])
+                latitude = float(value["latitude"])
+            except (KeyError, TypeError, ValueError):
+                return
+            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+                return
+
+            item = candidates.setdefault(
+                mapbox_id.strip(),
+                {
+                    "mapboxId": mapbox_id.strip(),
+                    "names": [],
+                    "longitude": longitude,
+                    "latitude": latitude,
+                },
+            )
+            clean_name = name.strip()
+            if clean_name not in item["names"]:
+                item["names"].append(clean_name)
+
+        if destination_evidence is not None:
+            for candidate in destination_evidence.get("matchedCandidates", []):
+                add_candidate(candidate)
+            for item in destination_evidence.get("additionalMapboxPlaces", []):
+                if isinstance(item, dict):
+                    add_candidate(item.get("place"))
+
+        for execution in executions:
+            if not execution.success:
+                continue
+            try:
+                payload = json.loads(execution.content)
+            except (TypeError, ValueError):
+                continue
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, dict):
+                continue
+            for result in data.get("results", []):
+                if not isinstance(result, dict):
+                    continue
+                add_candidate(result.get("place", result))
+            for place in data.get("additionalPlaces", []):
+                add_candidate(place)
+
+        normalized_answer = cls._normalize_place_text(answer)
+        name_to_ids: dict[str, set[str]] = {}
+        for mapbox_id, candidate in candidates.items():
+            for name in candidate["names"]:
+                name_to_ids.setdefault(cls._normalize_place_text(name), set()).add(
+                    mapbox_id
+                )
+
+        places: list[ChatPlace] = []
+        for mapbox_id, candidate in candidates.items():
+            matching_names = [
+                name
+                for name in candidate["names"]
+                if name_to_ids.get(cls._normalize_place_text(name)) == {mapbox_id}
+                and cls._normalize_place_text(name) in normalized_answer
+            ]
+            if not matching_names:
+                continue
+            display_name = max(matching_names, key=len)
+            places.append(
+                ChatPlace(
+                    mapboxId=mapbox_id,
+                    name=display_name,
+                    longitude=candidate["longitude"],
+                    latitude=candidate["latitude"],
+                )
+            )
+        return places
 
     @staticmethod
     def _collect_unique_sources(
@@ -406,6 +649,7 @@ def orchestrate_chat(
 __all__ = [
     "ChatOrchestrator",
     "ChatOrchestratorResult",
+    "CURRENT_LOCATION_TOOL_NAME",
     "NO_TOOL_CONTEXT",
     "SYSTEM_PROMPT",
     "ToolInfrastructureError",

@@ -8,6 +8,7 @@ from chatbot.tools.models import (
     KnowledgeBaseSource,
     MapboxCategorySearchInput,
     MapboxForwardSearchInput,
+    MapboxPlaceSummaryData,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
     MapboxSource,
@@ -82,6 +83,37 @@ class ToolInputModelTests(SimpleTestCase):
 
 
 class ToolResponseModelTests(SimpleTestCase):
+    def test_place_summary_parses_compact_camel_case_response(self):
+        result = ToolResult[MapboxPlaceSummaryData].model_validate(
+            {
+                "success": True,
+                "data": {
+                    "attribution": "Mapbox",
+                    "results": [
+                        {
+                            "mapboxId": "mapbox.poi.1",
+                            "name": "Coffee",
+                            "fullAddress": "Da Nang",
+                            "longitude": 108.2,
+                            "latitude": 16.1,
+                            "poiCategories": ["Cafe"],
+                            "distanceMeters": 120.5,
+                            "rating": 4.6,
+                        }
+                    ],
+                },
+            }
+        )
+
+        place = result.data.results[0]
+        self.assertEqual(place.mapbox_id, "mapbox.poi.1")
+        self.assertEqual(place.distance_meters, 120.5)
+        self.assertEqual(place.rating, 4.6)
+        serialized = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        self.assertNotIn("featureType", serialized["data"]["results"][0])
+        self.assertNotIn("poiCategoryIds", serialized["data"]["results"][0])
+        self.assertNotIn("popularity", serialized["data"]["results"][0])
+
     def test_place_result_parses_camel_case_response(self):
         result = ToolResult[MapboxPlaceToolData].model_validate(
             {

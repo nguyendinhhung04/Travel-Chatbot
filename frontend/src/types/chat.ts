@@ -13,9 +13,30 @@ export type MapboxSource = {
 
 export type ChatSource = KnowledgeBaseSource | MapboxSource;
 
+export type ChatPlace = {
+  mapboxId: string;
+  name: string;
+  longitude: number;
+  latitude: number;
+};
+
+export type UserLocation = {
+  longitude: number;
+  latitude: number;
+};
+
 export type ChatSuccessResponse = {
   answer: string;
   sources: ChatSource[];
+  places?: ChatPlace[];
+};
+
+export type CurrentLocationToolCallResponse = {
+  type: "client_tool_call";
+  toolCall: {
+    name: "get_current_location";
+    arguments: Record<string, never>;
+  };
 };
 
 export type ChatErrorResponse = {
@@ -27,4 +48,5 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   sources?: ChatSource[];
+  places?: ChatPlace[];
 };

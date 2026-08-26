@@ -22,6 +22,7 @@ from .models import (
     MapboxCandidateResolutionData,
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
+    MapboxPlaceSummaryData,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
     MapboxSource,
@@ -150,7 +151,7 @@ class ToolRegistry:
         sources = self._sources_for_result(result)
         error_code = result.error_code
         return ToolExecution(
-            content=result.model_dump_json(by_alias=True),
+            content=result.model_dump_json(by_alias=True, exclude_none=True),
             sources=sources,
             success=result.success,
             system_failure=(
@@ -231,7 +232,7 @@ class ToolRegistry:
             return ()
         if isinstance(result.data, RagToolData):
             return tuple(result.data.sources)
-        if isinstance(result.data, MapboxPlaceToolData):
+        if isinstance(result.data, (MapboxPlaceSummaryData, MapboxPlaceToolData)):
             return (MapboxSource(attribution=result.data.attribution),)
         if isinstance(result.data, MapboxCandidateResolutionData):
             return (MapboxSource(attribution=result.data.attribution),)

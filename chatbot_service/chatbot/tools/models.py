@@ -129,6 +129,26 @@ class MapboxPlaceToolData(ToolModel):
     results: list[MapboxPlaceItem]
 
 
+class MapboxPlaceSummaryItem(ToolModel):
+    """Compact place fields returned by ordinary ASP.NET Mapbox endpoints."""
+
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    full_address: str | None = Field(default=None, alias="fullAddress")
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    poi_categories: list[str] = Field(default_factory=list, alias="poiCategories")
+    operational_status: str | None = Field(default=None, alias="operationalStatus")
+    distance_meters: float | None = Field(default=None, alias="distanceMeters", ge=0)
+    eta_minutes: float | None = Field(default=None, alias="etaMinutes", ge=0)
+    rating: float | None = Field(default=None, ge=0, le=5)
+
+
+class MapboxPlaceSummaryData(ToolModel):
+    attribution: NonEmptyString
+    results: list[MapboxPlaceSummaryItem]
+
+
 class MapboxCandidateInput(ToolModel):
     candidate_id: NonEmptyString = Field(alias="candidateId")
     name: NonEmptyString
@@ -217,6 +237,15 @@ class MapboxSource(ToolModel):
     attribution: NonEmptyString
 
 
+class ChatPlace(ToolModel):
+    """Verified Mapbox place exposed for answer highlighting and map markers."""
+
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+
 ChatSource = Annotated[
     KnowledgeBaseSource | MapboxSource,
     Field(discriminator="type"),
@@ -236,6 +265,7 @@ class RagToolData(ToolModel):
 
 
 __all__ = [
+    "ChatPlace",
     "ChatSource",
     "KnowledgeBaseSource",
     "MapboxCategorySearchInput",
@@ -245,6 +275,8 @@ __all__ = [
     "MapboxCandidateResolveInput",
     "MapboxForwardSearchInput",
     "MapboxPlaceItem",
+    "MapboxPlaceSummaryData",
+    "MapboxPlaceSummaryItem",
     "MapboxPlaceToolData",
     "MapboxReverseLookupInput",
     "MapboxSource",

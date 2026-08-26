@@ -122,7 +122,7 @@ class DestinationDiscoveryPipelineTests(SimpleTestCase):
             evidence["matchedCandidates"],
             [
                 {
-                    "name": "Hồ Xuân Hương",
+                    "name": "Ho Xuan Huong",
                     "mapboxId": "mapbox.lake",
                     "fullAddress": "Đà Lạt, Lâm Đồng",
                     "categoryHints": ["lake"],

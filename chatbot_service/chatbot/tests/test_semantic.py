@@ -1,6 +1,8 @@
 """Tests for structured semantic interpretation."""
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -114,8 +116,71 @@ class SemanticModelTests(SimpleTestCase):
         )
         self.assertEqual(unsupported.status, InterpretationStatus.UNSUPPORTED)
 
+    def test_missing_client_location_can_keep_the_requested_business_action(self):
+        interpretation = SemanticInterpretation.model_validate(
+            {
+                **build_interpretation().model_dump(mode="json"),
+                "location": {"use_current_location": True},
+                "missing_information": ["current_location"],
+                "status": "needs_clarification",
+            }
+        )
+
+        self.assertEqual(
+            interpretation.actions[0].type,
+            SemanticActionType.DISCOVER_PLACES,
+        )
+        self.assertTrue(interpretation.location.use_current_location)
+
 
 class SemanticInterpreterTests(SimpleTestCase):
+    def test_interpreter_logs_validated_response_and_redacts_current_location(self):
+        response = build_interpretation().model_copy(
+            update={
+                "location": SemanticLocation(
+                    use_current_location=True,
+                    longitude=108.2,
+                    latitude=16.05,
+                )
+            }
+        )
+        terminal_output = StringIO()
+
+        with redirect_stdout(terminal_output):
+            SemanticInterpreter(StubChatModel(response)).interpret(
+                "Tìm quán cafe gần tôi",
+                current_location=SemanticLocation(
+                    longitude=108.2,
+                    latitude=16.05,
+                ),
+            )
+
+        output = terminal_output.getvalue()
+        self.assertIn("Semantic Gemini response (validated):", output)
+        self.assertIn('"primary_intent": "place_search"', output)
+        self.assertIn('"normalized_query": "Tìm quán cafe gần Mỹ Khê"', output)
+        self.assertIn('"type": "discover_places"', output)
+        self.assertIn("[location-redacted]", output)
+        self.assertNotIn("108.2", output)
+        self.assertNotIn("16.05", output)
+
+    def test_current_location_is_hydrated_when_semantics_requests_it(self):
+        response = build_interpretation().model_copy(
+            update={
+                "location": SemanticLocation(use_current_location=True),
+            }
+        )
+        model = StubChatModel(response)
+
+        result = SemanticInterpreter(model).interpret(
+            "TĂ¬m quĂ¡n cafe gáº§n tĂ´i",
+            current_location=SemanticLocation(longitude=108.2, latitude=16.05),
+        )
+
+        self.assertTrue(result.location.use_current_location)
+        self.assertEqual(result.location.longitude, 108.2)
+        self.assertEqual(result.location.latitude, 16.05)
+
     def test_interpreter_uses_json_schema_and_serializes_history_and_location(self):
         response = build_interpretation().model_dump(mode="json")
         model = StubChatModel(response)
@@ -177,12 +242,25 @@ class SemanticInterpreterTests(SimpleTestCase):
 
     def test_prompt_keeps_semantic_and_execution_boundaries_explicit(self):
         self.assertIn("Chọn đúng một primary_intent", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn(
+            "Phân biệt địa điểm cần tìm với địa điểm làm mốc",
+            SEMANTIC_SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            'Ví dụ "quán cafe gần PTIT": action=discover_places',
+            SEMANTIC_SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            'Ví dụ "tìm Highlands Coffee Nguyễn Trãi": action=find_named_place',
+            SEMANTIC_SYSTEM_PROMPT,
+        )
         self.assertIn("không tạo tên tool", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("canonicalId", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("Lịch trình chỉ là tư vấn văn bản", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("giao thông thời gian thực", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("entities.search_target", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("location.use_current_location", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("gần nhất dùng distance", SEMANTIC_SYSTEM_PROMPT)
 
 
