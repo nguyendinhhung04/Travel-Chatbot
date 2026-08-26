@@ -124,7 +124,8 @@ class MapboxToolClientTests(SimpleTestCase):
         self.assertTrue(forward.success)
         self.assertTrue(category_search.success)
         self.assertTrue(reverse.success)
-        self.assertEqual(forward.data.results, [])
+        self.assertEqual(forward.data.results[0].mapbox_id, "mapbox.cafe.1")
+        self.assertEqual(forward.data.results[0].distance_meters, 120.0)
         self.assertEqual(
             requests,
             [
@@ -226,7 +227,18 @@ PLACE_SUCCESS_RESPONSE = {
     "success": True,
     "data": {
         "attribution": "Mapbox",
-        "results": [],
+        "results": [
+            {
+                "mapboxId": "mapbox.cafe.1",
+                "name": "Cafe Example",
+                "fullAddress": "Hà Nội",
+                "longitude": 105.8,
+                "latitude": 21.0,
+                "poiCategories": ["cafe"],
+                "distanceMeters": 120.0,
+                "rating": 4.5,
+            }
+        ],
     },
     "errorCode": None,
     "errorMessage": None,

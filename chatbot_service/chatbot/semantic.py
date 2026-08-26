@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Sequence
 from datetime import date
 from enum import Enum
@@ -191,6 +192,18 @@ Quy tắc:
 - Tên/POI cụ thể dùng find_named_place; nhu cầu khám phá mở dùng discover_places.
   Với find_named_place, đặt entities.search_target đúng loại poi, address, city,
   country hoặc place.
+- Phân biệt địa điểm cần tìm với địa điểm làm mốc:
+  + Khi người dùng yêu cầu một loại địa điểm gần/quanh một địa điểm có tên, dùng
+    discover_places. Đặt loại địa điểm trong entities.place_types; đặt địa điểm làm
+    mốc trong location.near và entities.destinations; không đặt địa điểm làm mốc
+    trong entities.places.
+  + Chỉ dùng find_named_place và entities.places khi người dùng muốn tìm chính địa
+    điểm có tên, không phải khi tên đó chỉ đứng sau từ "gần" hoặc "quanh" để làm mốc.
+  + Ví dụ "quán cafe gần PTIT": action=discover_places,
+    entities.place_types=["cafe"], entities.destinations=["PTIT"],
+    entities.places=[], location.near="PTIT".
+  + Ví dụ "tìm Highlands Coffee Nguyễn Trãi": action=find_named_place,
+    entities.places=["Highlands Coffee Nguyễn Trãi"].
 - Backend tự ánh xạ travel_domains, place_types và experience_tags sang category.
   Không chọn loại địa điểm từ từ khóa phụ như mùa hoặc cảm xúc.
 - Chỉ đặt minimum_rating/rank_strategy khi người dùng nói rõ; gần nhất dùng distance,
@@ -254,6 +267,10 @@ class SemanticInterpreter:
             if isinstance(result, SemanticInterpretation)
             else SemanticInterpretation.model_validate(result)
         )
+        self._print_semantic_response(
+            interpretation,
+            sensitive_location=current_location,
+        )
 
         location = interpretation.location
         should_hydrate_location = (
@@ -279,6 +296,39 @@ class SemanticInterpreter:
                 }
             )
         return interpretation
+
+    @staticmethod
+    def _print_semantic_response(
+        interpretation: SemanticInterpretation,
+        *,
+        sensitive_location: SemanticLocation | None = None,
+    ) -> None:
+        """Print Gemini's validated semantic response without SDK metadata."""
+        content = interpretation.model_dump_json(
+            by_alias=True,
+            exclude_none=True,
+            indent=2,
+        )
+        if sensitive_location is not None:
+            for coordinate in (
+                sensitive_location.longitude,
+                sensitive_location.latitude,
+            ):
+                if coordinate is not None:
+                    content = content.replace(str(coordinate), "[location-redacted]")
+
+        output = (
+            "Semantic Gemini response (validated):\n"
+            f"--- MESSAGE: AI (STRUCTURED) ---\n{content}\n"
+        )
+        try:
+            print(output, end="", flush=True)
+        except UnicodeEncodeError:
+            stdout_buffer = getattr(sys.stdout, "buffer", None)
+            if stdout_buffer is None:
+                raise
+            stdout_buffer.write(output.encode("utf-8"))
+            stdout_buffer.flush()
 
 
 def interpret_question(

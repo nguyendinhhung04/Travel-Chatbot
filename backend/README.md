@@ -23,9 +23,13 @@ Các tool hiện là typed C# handler độc lập, chưa kết nối với Gemi
 một AI SDK cụ thể. Mỗi tool trả `ToolResult<T>` gồm `success`, `data`, `errorCode` và
 `errorMessage`.
 
-Kết quả typed tool chỉ giữ dữ liệu chatbot cần dùng và không chứa raw GeoJSON:
-Mapbox ID, tên, loại địa điểm,
-địa chỉ, tọa độ, category, trạng thái hoạt động, khoảng cách, ETA và attribution.
+Ba endpoint forward/category/reverse chỉ trả DTO gọn cho Django và không chứa raw
+GeoJSON: Mapbox ID, tên, địa chỉ, tọa độ, category hiển thị, trạng thái hoạt động,
+khoảng cách, ETA, rating và attribution. Các field kỹ thuật `featureType`,
+`poiCategoryIds`, `popularity` chỉ được giữ trong typed tool nội bộ để matching và
+xếp hạng. Endpoint `mapbox-resolve-candidates` vẫn trả contract đầy đủ để không làm
+mất evidence của nhánh khám phá điểm đến. Field tùy chọn có giá trị `null` không được
+serialize qua HTTP.
 Category ID cho chatbot do Semantic Interpretation và category resolver phía Django
 chọn từ whitelist; không cần tải Category List trong mỗi lượt hỏi. Response Mapbox
 không được cache hoặc lưu lâu dài.

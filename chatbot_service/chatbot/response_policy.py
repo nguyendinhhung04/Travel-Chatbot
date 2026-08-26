@@ -19,12 +19,14 @@ DESTINATION_DISCOVERY_POLICY = """Chính sách evidence cho nhóm khám phá đi
 """
 
 MAPBOX_FIRST_POLICY = """Chính sách evidence cho nhóm tìm kiếm và thông tin địa điểm:
-- Chỉ đề xuất địa điểm có mapboxId trong data.results; Knowledge Base chỉ bổ sung
+- Chỉ đề xuất địa điểm có mapboxId trong mapbox.places; Knowledge Base chỉ bổ sung
   bối cảnh ổn định và không được mâu thuẫn với dữ liệu Mapbox.
-- Chỉ nói "chưa tìm thấy" khi request thành công nhưng results rỗng. Nếu request
-  thất bại và không có kết quả thành công khác, nói "chưa thể lấy dữ liệu".
-- Nếu tìm tọa độ anchor không có kết quả nhưng tìm bằng near có kết quả, vẫn dùng
-  kết quả đó. Không suy đoán địa điểm thay thế.
+- mapbox.destinationLocations chỉ là anchor dùng để định vị khu vực, không phải địa
+  điểm được phép đề xuất.
+- Chỉ nói "chưa tìm thấy" khi mapbox.success=true nhưng mapbox.places rỗng. Nếu
+  mapbox.success=false, nói "chưa thể lấy dữ liệu".
+- Nếu destinationLocations rỗng nhưng mapbox.places có dữ liệu, vẫn dùng các địa
+  điểm đó. Không suy đoán địa điểm thay thế.
 """
 
 RAG_FIRST_ADVICE_POLICY = """Chính sách evidence cho nhóm hỏi đáp và tư vấn du lịch:

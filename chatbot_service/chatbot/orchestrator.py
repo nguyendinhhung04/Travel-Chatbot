@@ -241,7 +241,7 @@ class ChatOrchestrator:
         destination_evidence: dict[str, Any] | None = None,
     ) -> list[Any]:
         if destination_evidence is None:
-            evidence_content = ChatOrchestrator._tool_context_content(
+            evidence_content = ChatOrchestrator._ordinary_evidence_content(
                 planned_calls,
                 executions,
             )
@@ -279,24 +279,118 @@ class ChatOrchestrator:
         return messages
 
     @staticmethod
-    def _tool_context_content(
+    def _ordinary_evidence_content(
         calls: Sequence[PlannedToolCall],
         executions: Sequence[ToolExecution],
     ) -> str:
         if not calls:
             return NO_TOOL_CONTEXT
-        payload = [
-            {
-                "tool": call.name,
-                "result": json.loads(execution.content),
-            }
+
+        payload: dict[str, Any] = {"knowledgeBase": []}
+        mapbox_calls = [
+            (call, execution)
             for call, execution in zip(calls, executions, strict=True)
+            if call.name.startswith("mapbox_")
         ]
+        if mapbox_calls:
+            payload["mapbox"] = {
+                "success": all(execution.success for _, execution in mapbox_calls),
+                "destinationLocations": [],
+                "places": [],
+            }
+
+        errors: list[dict[str, str]] = []
+        for call, execution in zip(calls, executions, strict=True):
+            try:
+                result = json.loads(execution.content)
+            except (TypeError, json.JSONDecodeError):
+                result = {}
+
+            if not execution.success:
+                error_code = execution.error_code or result.get("errorCode")
+                error: dict[str, str] = {"tool": call.name}
+                if isinstance(error_code, str) and error_code:
+                    error["errorCode"] = error_code
+                errors.append(error)
+                continue
+
+            data = result.get("data")
+            if not isinstance(data, dict):
+                continue
+
+            if call.name == "search_travel_knowledge":
+                chunks = data.get("chunks")
+                if not isinstance(chunks, list):
+                    continue
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    title = chunk.get("title")
+                    content = chunk.get("content")
+                    if isinstance(title, str) and isinstance(content, str):
+                        payload["knowledgeBase"].append(
+                            {"title": title, "content": content}
+                        )
+                continue
+
+            if not call.name.startswith("mapbox_"):
+                continue
+            results = data.get("results")
+            if not isinstance(results, list):
+                continue
+
+            target = (
+                payload["mapbox"]["destinationLocations"]
+                if call.evidence_kind == "destination_location"
+                else payload["mapbox"]["places"]
+            )
+            for place in results:
+                compact_place = ChatOrchestrator._compact_mapbox_place(
+                    place,
+                    destination_location=(
+                        call.evidence_kind == "destination_location"
+                    ),
+                )
+                if compact_place is not None:
+                    target.append(compact_place)
+
+        if errors:
+            payload["errors"] = errors
         return json.dumps(
             payload,
             ensure_ascii=False,
             indent=2,
         )
+
+    @staticmethod
+    def _compact_mapbox_place(
+        place: Any,
+        *,
+        destination_location: bool,
+    ) -> dict[str, Any] | None:
+        if not isinstance(place, dict):
+            return None
+        required_fields = ("mapboxId", "name", "longitude", "latitude")
+        if any(place.get(field) is None for field in required_fields):
+            return None
+
+        compact = {field: place[field] for field in required_fields}
+        if destination_location:
+            return compact
+
+        optional_fields = (
+            "fullAddress",
+            "poiCategories",
+            "operationalStatus",
+            "distanceMeters",
+            "etaMinutes",
+            "rating",
+        )
+        for field in optional_fields:
+            value = place.get(field)
+            if value is not None and value != []:
+                compact[field] = value
+        return compact
 
     @staticmethod
     def _invoke_ai_message(

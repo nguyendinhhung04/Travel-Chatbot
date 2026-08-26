@@ -14,7 +14,7 @@ from .models import (
     MapboxCandidateResolutionData,
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
-    MapboxPlaceToolData,
+    MapboxPlaceSummaryData,
     MapboxReverseLookupInput,
     ToolResult,
 )
@@ -26,7 +26,7 @@ TOOL_TIMEOUT_ERROR = "tool_timeout"
 TOOL_UNAVAILABLE_ERROR = "tool_unavailable"
 TOOL_INVALID_RESPONSE_ERROR = "tool_invalid_response"
 
-_PLACE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceToolData])
+_PLACE_SUMMARY_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceSummaryData])
 _CANDIDATE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxCandidateResolutionData])
 _ResultData = TypeVar("_ResultData")
 
@@ -55,31 +55,31 @@ class MapboxToolClient:
     def forward_search(
         self,
         request: MapboxForwardSearchInput,
-    ) -> ToolResult[MapboxPlaceToolData]:
+    ) -> ToolResult[MapboxPlaceSummaryData]:
         return self._post(
             "/api/chatbot/tools/mapbox-forward-search",
             request.model_dump(exclude_none=True),
-            _PLACE_RESULT_ADAPTER,
+            _PLACE_SUMMARY_RESULT_ADAPTER,
         )
 
     def category_search(
         self,
         request: MapboxCategorySearchInput,
-    ) -> ToolResult[MapboxPlaceToolData]:
+    ) -> ToolResult[MapboxPlaceSummaryData]:
         return self._post(
             "/api/chatbot/tools/mapbox-category-search",
             request.model_dump(exclude_none=True),
-            _PLACE_RESULT_ADAPTER,
+            _PLACE_SUMMARY_RESULT_ADAPTER,
         )
 
     def reverse_lookup(
         self,
         request: MapboxReverseLookupInput,
-    ) -> ToolResult[MapboxPlaceToolData]:
+    ) -> ToolResult[MapboxPlaceSummaryData]:
         return self._post(
             "/api/chatbot/tools/mapbox-reverse-lookup",
             request.model_dump(exclude_none=True),
-            _PLACE_RESULT_ADAPTER,
+            _PLACE_SUMMARY_RESULT_ADAPTER,
         )
 
     def resolve_candidates(

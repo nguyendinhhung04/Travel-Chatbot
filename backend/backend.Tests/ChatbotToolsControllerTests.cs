@@ -158,7 +158,7 @@ public sealed class ChatbotToolsControllerTests
             },
             cancellationSource.Token);
 
-        var result = AssertObjectResult<MapboxPlaceToolData>(
+        var result = AssertObjectResult<MapboxPlaceSummaryData>(
             actionResult,
             StatusCodes.Status200OK,
             success: true);
@@ -168,7 +168,7 @@ public sealed class ChatbotToolsControllerTests
         Assert.Equal(5, client.ForwardRequest?.Limit);
         Assert.Equal("coffee", client.ForwardRequest?.PoiCategory);
         Assert.Equal(cancellationSource.Token, client.CancellationToken);
-        Assert.Empty(Assert.IsType<MapboxPlaceToolData>(result.Data).Results);
+        Assert.Empty(Assert.IsType<MapboxPlaceSummaryData>(result.Data).Results);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class ChatbotToolsControllerTests
             },
             CancellationToken.None);
 
-        AssertObjectResult<MapboxPlaceToolData>(
+        AssertObjectResult<MapboxPlaceSummaryData>(
             actionResult,
             StatusCodes.Status200OK,
             success: true);
@@ -213,7 +213,7 @@ public sealed class ChatbotToolsControllerTests
             },
             CancellationToken.None);
 
-        AssertObjectResult<MapboxPlaceToolData>(
+        AssertObjectResult<MapboxPlaceSummaryData>(
             actionResult,
             StatusCodes.Status200OK,
             success: true);
@@ -233,7 +233,7 @@ public sealed class ChatbotToolsControllerTests
             new MapboxForwardSearchToolHttpRequest(),
             CancellationToken.None);
 
-        var result = AssertObjectResult<MapboxPlaceToolData>(
+        var result = AssertObjectResult<MapboxPlaceSummaryData>(
             actionResult,
             StatusCodes.Status400BadRequest,
             success: false);
@@ -273,7 +273,7 @@ public sealed class ChatbotToolsControllerTests
             new MapboxForwardSearchToolHttpRequest { Query = "coffee" },
             CancellationToken.None);
 
-        var result = AssertObjectResult<MapboxPlaceToolData>(
+        var result = AssertObjectResult<MapboxPlaceSummaryData>(
             actionResult,
             expectedStatus,
             success: false);

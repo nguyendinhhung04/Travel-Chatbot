@@ -117,7 +117,11 @@ Moi request duoc xu ly theo thu tu:
 3. `CategoryResolver` anh xa travel domain sang canonical Mapbox category trong whitelist.
 4. Voi destination discovery, Gemini tao candidate; ASP.NET xac minh ca batch,
    matching, loai trung va chi tra DTO da chuan hoa.
-5. Django dua evidence da xac minh cho Gemini tong hop cau tra loi.
+5. Django dua evidence da xac minh cho Gemini tong hop cau tra loi. Nhanh thong
+   thuong gom du lieu thanh `knowledgeBase` va `mapbox`; ket qua tim anchor nam trong
+   `mapbox.destinationLocations`, con dia diem duoc phep de xuat nam trong
+   `mapbox.places`. Nhanh destination discovery giu nguyen `destinationResolved`,
+   `matchedCandidates` va `additionalMapboxPlaces`.
 
 Bo runtime tool gom:
 

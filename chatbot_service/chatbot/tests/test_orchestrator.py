@@ -1,5 +1,6 @@
 """Tests for intent-aware deterministic tool orchestration."""
 
+import json
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import call, patch
@@ -30,6 +31,7 @@ from chatbot.semantic import (
     SemanticLocation,
     TravelDomain,
 )
+from chatbot.tool_planner import PlannedToolCall
 from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
 from chatbot.tools.registry import ToolExecution
 
@@ -208,7 +210,7 @@ class ChatOrchestratorTests(SimpleTestCase):
         messages = model.invocations[0]
         self.assertIsInstance(messages[0], SystemMessage)
         self.assertIn(RAG_FIRST_ADVICE_POLICY.strip(), messages[0].content)
-        self.assertIn('"success": true', messages[0].content)
+        self.assertIn('"knowledgeBase": []', messages[0].content)
         self.assertIn("=== CÂU HỎI ===\nHuế có gì?", messages[0].content)
         self.assertNotIn("=== PHÂN TÍCH BACKEND ===", messages[0].content)
         self.assertNotIn('"primary_intent"', messages[0].content)
@@ -271,6 +273,100 @@ class ChatOrchestratorTests(SimpleTestCase):
         self.assertFalse(
             any(name == "mapbox_list_categories" for name, _ in registry.calls)
         )
+
+    def test_ordinary_evidence_is_compact_and_separates_anchor_from_places(self):
+        calls = [
+            PlannedToolCall(
+                "search_travel_knowledge",
+                {"query": "Cafe gần FPT"},
+                evidence_kind="knowledge",
+            ),
+            PlannedToolCall(
+                "mapbox_forward_search",
+                {"q": "FPT Phạm Văn Bạch"},
+                evidence_kind="destination_location",
+            ),
+            PlannedToolCall(
+                "mapbox_category_search",
+                {"category_id": "cafe"},
+                evidence_kind="poi",
+            ),
+        ]
+        executions = [
+            ToolExecution(
+                content=(
+                    '{"success":true,"data":{"chunks":['
+                    '{"title":"Cafe","content":"Nội dung gọn",'
+                    '"source":"cafe.md","heading":"Gợi ý"}],'
+                    '"sources":[{"title":"Cafe","source":"cafe.md"}]}}'
+                ),
+                sources=(),
+                success=True,
+                system_failure=False,
+            ),
+            compact_mapbox_execution(
+                mapbox_id="anchor.fpt",
+                name="FPT Phạm Văn Bạch",
+                longitude=105.79,
+                latitude=21.03,
+                feature_type="poi",
+                popularity=0.8,
+            ),
+            compact_mapbox_execution(
+                mapbox_id="cafe.1",
+                name="Cafe Example",
+                longitude=105.80,
+                latitude=21.04,
+                full_address="Cầu Giấy, Hà Nội",
+                categories=["quán cafe"],
+                distance=350.0,
+                rating=4.5,
+                feature_type="poi",
+                popularity=0.9,
+            ),
+        ]
+
+        evidence = json.loads(
+            ChatOrchestrator._ordinary_evidence_content(calls, executions)
+        )
+
+        self.assertEqual(
+            evidence,
+            {
+                "knowledgeBase": [
+                    {"title": "Cafe", "content": "Nội dung gọn"}
+                ],
+                "mapbox": {
+                    "success": True,
+                    "destinationLocations": [
+                        {
+                            "mapboxId": "anchor.fpt",
+                            "name": "FPT Phạm Văn Bạch",
+                            "longitude": 105.79,
+                            "latitude": 21.03,
+                        }
+                    ],
+                    "places": [
+                        {
+                            "mapboxId": "cafe.1",
+                            "name": "Cafe Example",
+                            "fullAddress": "Cầu Giấy, Hà Nội",
+                            "longitude": 105.8,
+                            "latitude": 21.04,
+                            "poiCategories": ["quán cafe"],
+                            "distanceMeters": 350.0,
+                            "rating": 4.5,
+                        }
+                    ],
+                },
+            },
+        )
+        serialized = json.dumps(evidence, ensure_ascii=False)
+        self.assertNotIn("source", serialized)
+        self.assertNotIn("attribution", serialized)
+        self.assertNotIn("featureType", serialized)
+        self.assertNotIn("poiCategoryIds", serialized)
+        self.assertNotIn("popularity", serialized)
 
     def test_place_discovery_falls_back_to_near_when_anchor_has_no_coordinates(self):
         interpretation = build_interpretation(
@@ -540,6 +636,48 @@ def mapbox_place_execution(longitude, latitude, *sources):
             ']}}'
         ),
         sources=tuple(sources),
+        success=True,
+        system_failure=False,
+    )
+
+
+def compact_mapbox_execution(
+    *,
+    mapbox_id,
+    name,
+    longitude,
+    latitude,
+    full_address=None,
+    categories=None,
+    distance=None,
+    rating=None,
+    feature_type=None,
+    popularity=None,
+):
+    place = {
+        "mapboxId": mapbox_id,
+        "name": name,
+        "fullAddress": full_address,
+        "longitude": longitude,
+        "latitude": latitude,
+        "poiCategories": categories or [],
+        "operationalStatus": None,
+        "distanceMeters": distance,
+        "etaMinutes": None,
+        "rating": rating,
+        "featureType": feature_type,
+        "poiCategoryIds": ["cafe"],
+        "popularity": popularity,
+    }
+    return ToolExecution(
+        content=json.dumps(
+            {
+                "success": True,
+                "data": {"attribution": "Mapbox", "results": [place]},
+            },
+            ensure_ascii=False,
+        ),
+        sources=(),
         success=True,
         system_failure=False,
     )

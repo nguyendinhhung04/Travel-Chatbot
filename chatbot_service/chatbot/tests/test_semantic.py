@@ -1,6 +1,8 @@
 """Tests for structured semantic interpretation."""
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -116,6 +118,36 @@ class SemanticModelTests(SimpleTestCase):
 
 
 class SemanticInterpreterTests(SimpleTestCase):
+    def test_interpreter_logs_validated_response_and_redacts_current_location(self):
+        response = build_interpretation().model_copy(
+            update={
+                "location": SemanticLocation(
+                    use_current_location=True,
+                    longitude=108.2,
+                    latitude=16.05,
+                )
+            }
+        )
+        terminal_output = StringIO()
+
+        with redirect_stdout(terminal_output):
+            SemanticInterpreter(StubChatModel(response)).interpret(
+                "Tìm quán cafe gần tôi",
+                current_location=SemanticLocation(
+                    longitude=108.2,
+                    latitude=16.05,
+                ),
+            )
+
+        output = terminal_output.getvalue()
+        self.assertIn("Semantic Gemini response (validated):", output)
+        self.assertIn('"primary_intent": "place_search"', output)
+        self.assertIn('"normalized_query": "Tìm quán cafe gần Mỹ Khê"', output)
+        self.assertIn('"type": "discover_places"', output)
+        self.assertIn("[location-redacted]", output)
+        self.assertNotIn("108.2", output)
+        self.assertNotIn("16.05", output)
+
     def test_current_location_is_hydrated_when_semantics_requests_it(self):
         response = build_interpretation().model_copy(
             update={
@@ -194,6 +226,18 @@ class SemanticInterpreterTests(SimpleTestCase):
 
     def test_prompt_keeps_semantic_and_execution_boundaries_explicit(self):
         self.assertIn("Chọn đúng một primary_intent", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn(
+            "Phân biệt địa điểm cần tìm với địa điểm làm mốc",
+            SEMANTIC_SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            'Ví dụ "quán cafe gần PTIT": action=discover_places',
+            SEMANTIC_SYSTEM_PROMPT,
+        )
+        self.assertIn(
+            'Ví dụ "tìm Highlands Coffee Nguyễn Trãi": action=find_named_place',
+            SEMANTIC_SYSTEM_PROMPT,
+        )
         self.assertIn("không tạo tên tool", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("canonicalId", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("Lịch trình chỉ là tư vấn văn bản", SEMANTIC_SYSTEM_PROMPT)

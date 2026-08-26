@@ -53,6 +53,15 @@ public sealed class MapboxToolsTests
         var serialized = JsonSerializer.Serialize(data);
         Assert.DoesNotContain("rawResponse", serialized);
         Assert.DoesNotContain("ignored", serialized);
+
+        var summary = MapboxPlaceSummaryData.From(data);
+        var summaryJson = JsonSerializer.Serialize(summary);
+        Assert.Contains("mapboxId", summaryJson);
+        Assert.Contains("fullAddress", summaryJson);
+        Assert.Contains("poiCategories", summaryJson);
+        Assert.DoesNotContain("featureType", summaryJson);
+        Assert.DoesNotContain("poiCategoryIds", summaryJson);
+        Assert.DoesNotContain("popularity", summaryJson);
     }
 
     [Fact]

@@ -7,7 +7,7 @@ from django.test import SimpleTestCase
 from langchain_core.documents import Document
 
 from chatbot.tools.models import (
-    MapboxPlaceToolData,
+    MapboxPlaceSummaryData,
     RagToolData,
     ToolResult,
 )
@@ -102,10 +102,10 @@ class ToolRegistryTests(SimpleTestCase):
 
     def test_mapbox_execution_returns_attribution_source(self):
         self.mapbox_client.forward_search.return_value = ToolResult[
-            MapboxPlaceToolData
+            MapboxPlaceSummaryData
         ](
             success=True,
-            data=MapboxPlaceToolData(
+            data=MapboxPlaceSummaryData(
                 attribution="Mapbox",
                 results=[],
             ),
@@ -126,7 +126,7 @@ class ToolRegistryTests(SimpleTestCase):
 
     def test_tool_failure_is_classified_for_orchestrator(self):
         self.mapbox_client.forward_search.return_value = ToolResult[
-            MapboxPlaceToolData
+            MapboxPlaceSummaryData
         ](
             success=False,
             error_code="mapbox_timeout",
