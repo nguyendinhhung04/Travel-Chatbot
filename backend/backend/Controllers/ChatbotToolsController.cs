@@ -14,7 +14,6 @@ public sealed class ChatbotToolsController(
     MapboxCandidateResolverTool candidateResolverTool) : ControllerBase
 {
     [HttpPost("mapbox-forward-search")]
-    [ProducesResponseType<ToolResult<MapboxPlaceToolData>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status502BadGateway)]

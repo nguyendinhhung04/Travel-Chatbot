@@ -116,6 +116,22 @@ class SemanticModelTests(SimpleTestCase):
         )
         self.assertEqual(unsupported.status, InterpretationStatus.UNSUPPORTED)
 
+    def test_missing_client_location_can_keep_the_requested_business_action(self):
+        interpretation = SemanticInterpretation.model_validate(
+            {
+                **build_interpretation().model_dump(mode="json"),
+                "location": {"use_current_location": True},
+                "missing_information": ["current_location"],
+                "status": "needs_clarification",
+            }
+        )
+
+        self.assertEqual(
+            interpretation.actions[0].type,
+            SemanticActionType.DISCOVER_PLACES,
+        )
+        self.assertTrue(interpretation.location.use_current_location)
+
 
 class SemanticInterpreterTests(SimpleTestCase):
     def test_interpreter_logs_validated_response_and_redacts_current_location(self):

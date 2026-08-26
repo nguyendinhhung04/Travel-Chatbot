@@ -165,7 +165,16 @@ class SemanticInterpretation(SemanticModel):
                 raise ValueError(
                     "needs_clarification requires at least one missing information item"
                 )
-            if SemanticActionType.REQUEST_CLARIFICATION not in action_types:
+            is_client_location_request = (
+                self.location.use_current_location
+                and self.location.longitude is None
+                and self.location.latitude is None
+                and "current_location" in self.missing_information
+            )
+            if (
+                SemanticActionType.REQUEST_CLARIFICATION not in action_types
+                and not is_client_location_request
+            ):
                 raise ValueError(
                     "needs_clarification requires a request_clarification action"
                 )
@@ -212,7 +221,9 @@ Quy tắc:
   unsupported/report_unsupported. Lịch trình chỉ là tư vấn văn bản.
 - Các câu như "gần tôi", "quanh đây", "ở đâu" đặt location.use_current_location=true.
   Nếu current_location là null thì dùng needs_clarification và nêu
-  missing_information là "current_location"; nếu đã có thì dùng tọa độ đó để tìm kiếm.
+  missing_information là "current_location"; giữ action nghiệp vụ người dùng yêu cầu
+  vì backend sẽ xin vị trí từ client trước. Nếu đã có current_location thì dùng tọa độ
+  đó để tìm kiếm.
 - Dùng history để giải tham chiếu. normalized_query phải độc lập, đúng ý và không
   tự thêm dữ kiện.
 """
