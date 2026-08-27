@@ -7,7 +7,6 @@ public sealed class MapboxClient(HttpClient httpClient, IOptions<MapboxOptions> 
     : IMapboxClient
 {
     private const string ForwardPath = "search/searchbox/v1/forward";
-    private const string CategoryListPath = "search/searchbox/v1/list/category";
     private const string ReverseLookupPath = "search/searchbox/v1/reverse";
     private readonly MapboxOptions _options = options.Value;
 
@@ -15,19 +14,6 @@ public sealed class MapboxClient(HttpClient httpClient, IOptions<MapboxOptions> 
         MapboxForwardSearchRequest request,
         CancellationToken cancellationToken) =>
         GetAsync(ForwardPath, request.ToQueryParameters(), cancellationToken);
-
-    public Task<MapboxRawResponse> ListCategoriesAsync(
-        string? language,
-        CancellationToken cancellationToken)
-    {
-        var parameters = new Dictionary<string, string?>(StringComparer.Ordinal);
-        if (!string.IsNullOrWhiteSpace(language))
-        {
-            parameters["language"] = language.Trim();
-        }
-
-        return GetAsync(CategoryListPath, parameters, cancellationToken);
-    }
 
     public Task<MapboxRawResponse> SearchCategoryAsync(
         string categoryId,

@@ -45,34 +45,6 @@ public sealed class MapboxClientTests
     }
 
     [Fact]
-    public async Task ListCategoriesAsync_ForwardsLanguageAndAddsServerToken()
-    {
-        var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(
-                "{\"listItems\":[{\"canonical_id\":\"restaurant\",\"name\":\"Restaurant\"}]}",
-                Encoding.UTF8,
-                "application/json")
-        });
-        var httpClient = new HttpClient(handler)
-        {
-            BaseAddress = new Uri("https://api.mapbox.com/")
-        };
-        var client = new MapboxClient(
-            httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
-
-        var response = await client.ListCategoriesAsync(" en ", CancellationToken.None);
-
-        Assert.Equal(200, response.StatusCode);
-        Assert.Contains("restaurant", response.Body);
-        Assert.NotNull(handler.RequestUri);
-        Assert.Equal("/search/searchbox/v1/list/category", handler.RequestUri.AbsolutePath);
-        Assert.Contains("language=en", handler.RequestUri.Query);
-        Assert.Contains("access_token=server-token", handler.RequestUri.Query);
-    }
-
-    [Fact]
     public async Task SearchCategoryAsync_ForwardsCategoryAndSupportedParameters()
     {
         var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)

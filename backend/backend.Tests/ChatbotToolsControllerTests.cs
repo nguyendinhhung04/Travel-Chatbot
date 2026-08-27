@@ -311,7 +311,6 @@ public sealed class ChatbotToolsControllerTests
         public string? LastCall { get; private set; }
         public CancellationToken CancellationToken { get; private set; }
         public MapboxForwardSearchRequest? ForwardRequest { get; private set; }
-        public string? Language { get; private set; }
         public string? CategoryId { get; private set; }
         public MapboxCategorySearchRequest? CategoryRequest { get; private set; }
         public MapboxReverseLookupRequest? ReverseRequest { get; private set; }
@@ -324,16 +323,6 @@ public sealed class ChatbotToolsControllerTests
         {
             LastCall = "forward";
             ForwardRequest = request;
-            CancellationToken = cancellationToken;
-            return Complete();
-        }
-
-        public Task<MapboxRawResponse> ListCategoriesAsync(
-            string? language,
-            CancellationToken cancellationToken)
-        {
-            LastCall = "categories";
-            Language = language;
             CancellationToken = cancellationToken;
             return Complete();
         }

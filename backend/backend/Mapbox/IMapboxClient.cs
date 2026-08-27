@@ -6,10 +6,6 @@ public interface IMapboxClient
         MapboxForwardSearchRequest request,
         CancellationToken cancellationToken);
 
-    Task<MapboxRawResponse> ListCategoriesAsync(
-        string? language,
-        CancellationToken cancellationToken);
-
     Task<MapboxRawResponse> SearchCategoryAsync(
         string categoryId,
         MapboxCategorySearchRequest request,

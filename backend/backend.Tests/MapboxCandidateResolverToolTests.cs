@@ -256,10 +256,6 @@ public sealed class MapboxCandidateResolverToolTests
             return Task.FromResult(CategoryResponse);
         }
 
-        public Task<MapboxRawResponse> ListCategoriesAsync(
-            string? language,
-            CancellationToken cancellationToken) => Task.FromResult(Response());
-
         public Task<MapboxRawResponse> ReverseLookupAsync(
             MapboxReverseLookupRequest request,
             CancellationToken cancellationToken) => Task.FromResult(Response());

@@ -330,7 +330,6 @@ public sealed class MapboxToolsTests
     {
         public int CallCount { get; private set; }
         public MapboxForwardSearchRequest? ForwardRequest { get; private set; }
-        public string? Language { get; private set; }
         public string? CategoryId { get; private set; }
         public MapboxCategorySearchRequest? CategoryRequest { get; private set; }
         public MapboxReverseLookupRequest? ReverseRequest { get; private set; }
@@ -342,14 +341,6 @@ public sealed class MapboxToolsTests
             CancellationToken cancellationToken)
         {
             ForwardRequest = request;
-            return Complete();
-        }
-
-        public Task<MapboxRawResponse> ListCategoriesAsync(
-            string? language,
-            CancellationToken cancellationToken)
-        {
-            Language = language;
             return Complete();
         }
 
