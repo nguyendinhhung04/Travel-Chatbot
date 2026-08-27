@@ -201,6 +201,27 @@ textarea:disabled {
   border-radius: 50%;
 }
 
+.new-chat-button {
+  padding: 7px 11px;
+  color: var(--accent-deep);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.new-chat-button:hover:not(:disabled) {
+  background: var(--page);
+}
+
+.new-chat-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .messages {
   flex: 1;
   min-height: 0;

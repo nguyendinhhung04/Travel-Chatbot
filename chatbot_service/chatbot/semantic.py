@@ -23,7 +23,7 @@ from chatbot.rag.rag_chain import get_chat_model
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-MAX_HISTORY_MESSAGES = 12
+MAX_HISTORY_MESSAGES = 6
 
 
 class SemanticModel(BaseModel):

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import ChatWindow from "@/components/chat-window";
 import MapPanel from "@/components/map-panel";
 import type { ChatPlace, UserLocation } from "@/types/chat";
@@ -20,14 +20,14 @@ export default function TravelWorkspace() {
   } | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
-  function addPlaces(nextPlaces: ChatPlace[]) {
+  const addPlaces = useCallback((nextPlaces: ChatPlace[]) => {
     if (nextPlaces.length === 0) return;
     setPlaces((current) => {
       const byId = new Map(current.map((place) => [place.mapboxId, place]));
       for (const place of nextPlaces) byId.set(place.mapboxId, place);
       return [...byId.values()];
     });
-  }
+  }, []);
 
   function handlePlaceHover(place: ChatPlace) {
     setActivePlaceId(place.mapboxId);

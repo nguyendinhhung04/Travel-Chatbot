@@ -31,6 +31,29 @@ const DEFAULT_ERROR = "Không thể nhận câu trả lời. Vui lòng thử l�
 
 const LOCATION_ERROR = "Không thể lấy vị trí hiện tại. Hãy bật GPS và quyền vị trí rồi gửi lại câu hỏi.";
 
+const MAX_CONVERSATION_TURNS = 3;
+const MAX_HISTORY_MESSAGES = MAX_CONVERSATION_TURNS * 2;
+const CHAT_STORAGE_KEY = "travel_chat_messages";
+
+function trimMessages(messages: ChatMessageType[]) {
+  return messages.slice(-MAX_HISTORY_MESSAGES);
+}
+
+function withoutPendingUserMessage(messages: ChatMessageType[]) {
+  return messages.at(-1)?.role === "user" ? messages.slice(0, -1) : messages;
+}
+
+function isStoredMessage(value: unknown): value is ChatMessageType {
+  if (typeof value !== "object" || value === null) return false;
+
+  const message = value as Partial<ChatMessageType>;
+  return (
+    (message.role === "user" || message.role === "assistant") &&
+    typeof message.content === "string" &&
+    message.content.trim().length > 0
+  );
+}
+
 function isSource(value: unknown): value is ChatSource {
   if (
     typeof value !== "object" ||
@@ -105,10 +128,57 @@ export default function ChatWindow({
   onPlaceClick,
 }: ChatWindowProps) {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const stored = window.localStorage.getItem(CHAT_STORAGE_KEY);
+        if (stored) {
+          const parsed: unknown = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            const restoredMessages = trimMessages(parsed.filter(isStoredMessage)).map(
+              (message) => ({
+                ...message,
+                id: crypto.randomUUID(),
+              }),
+            );
+            setMessages(restoredMessages);
+            onPlacesReceived(
+              restoredMessages.flatMap((message) => message.places ?? []).filter(isPlace),
+            );
+          }
+        }
+      } catch {
+        try {
+          window.localStorage.removeItem(CHAT_STORAGE_KEY);
+        } catch {
+          // Ignore storage cleanup failures and keep the in-memory state empty.
+        }
+      } finally {
+        setStorageLoaded(true);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [onPlacesReceived]);
+
+  useEffect(() => {
+    if (!storageLoaded) return;
+    try {
+      const completedMessages = withoutPendingUserMessage(messages);
+      window.localStorage.setItem(
+        CHAT_STORAGE_KEY,
+        JSON.stringify(trimMessages(completedMessages)),
+      );
+    } catch {
+      // Continue with in-memory history when browser storage is unavailable.
+    }
+  }, [messages, storageLoaded]);
 
   useEffect(() => {
     const messagesElement = messagesRef.current;
@@ -155,6 +225,7 @@ export default function ChatWindow({
 
   async function requestChat(
     question: string,
+    history: Array<Pick<ChatMessageType, "role" | "content">>,
     currentLocation?: UserLocation,
   ): Promise<unknown> {
     const response = await fetch("/api/chat", {
@@ -162,6 +233,7 @@ export default function ChatWindow({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: question,
+        history,
         ...(currentLocation === undefined
           ? {}
           : { current_location: currentLocation }),
@@ -184,7 +256,7 @@ export default function ChatWindow({
       places: payload.places ?? [],
     };
 
-    setMessages((current) => [...current, assistantMessage]);
+    setMessages((current) => trimMessages([...current, assistantMessage]));
     onPlacesReceived(payload.places ?? []);
     setInput("");
   }
@@ -199,16 +271,20 @@ export default function ChatWindow({
       content: question,
     };
 
+    const history = withoutPendingUserMessage(messages)
+      .slice(-MAX_HISTORY_MESSAGES)
+      .map(({ role, content }) => ({ role, content }));
+
     setMessages((current) => [...current, userMessage]);
     setError(null);
     setLoading(true);
 
     try {
-      let payload = await requestChat(question);
+      let payload = await requestChat(question, history);
       if (isCurrentLocationToolCall(payload)) {
         const currentLocation = await getCurrentLocation();
         onCurrentLocationReceived(currentLocation);
-        payload = await requestChat(question, currentLocation);
+        payload = await requestChat(question, history, currentLocation);
         if (isCurrentLocationToolCall(payload)) {
           throw new Error(LOCATION_ERROR);
         }
@@ -223,6 +299,17 @@ export default function ChatWindow({
     }
   }
 
+  function startNewConversation() {
+    setMessages([]);
+    setError(null);
+    setInput("");
+    try {
+      window.localStorage.removeItem(CHAT_STORAGE_KEY);
+    } catch {
+      // Ignore storage cleanup failures.
+    }
+  }
+
   return (
     <section className="chat-shell" aria-label="Trợ lý du lịch">
       <header className="chat-header">
@@ -232,6 +319,14 @@ export default function ChatWindow({
           <h1>Trợ lý du lịch</h1>
         </div>
         <span className="status-pill"><span className="status-dot" /> Sẵn sàng</span>
+        <button
+          type="button"
+          className="new-chat-button"
+          onClick={startNewConversation}
+          disabled={loading}
+        >
+          Cuộc trò chuyện mới
+        </button>
       </header>
 
       <div
