@@ -37,6 +37,27 @@ from chatbot.tools.registry import ToolExecution
 
 
 class ChatOrchestratorTests(SimpleTestCase):
+    def test_destination_coordinates_ignore_fuzzy_result_with_wrong_name(self):
+        execution = ToolExecution(
+            content=(
+                '{"success":true,"data":{"results":['
+                '{"name":"Cửa Hàng Đá Ốp Lát","longitude":105.79,"latitude":21.04},'
+                '{"name":"Đà Lạt","longitude":108.45,"latitude":11.94}'
+                ']}}'
+            ),
+            sources=(),
+            success=True,
+            system_failure=False,
+        )
+
+        self.assertEqual(
+            ChatOrchestrator._first_result_coordinates(
+                execution,
+                destination="Đà Lạt",
+            ),
+            (108.45, 11.94),
+        )
+
     def test_model_request_log_redacts_current_location_coordinates(self):
         terminal_output = StringIO()
 

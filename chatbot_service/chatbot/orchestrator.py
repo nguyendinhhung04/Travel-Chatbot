@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-import sys
+import re
 import unicodedata
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,6 +30,21 @@ from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
 from chatbot.tools.models import ChatPlace, ChatSource
 from chatbot.tools.registry import ToolExecution, ToolRegistry
+
+
+def _normalized_search_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFD", value.casefold().replace("đ", "d"))
+    without_marks = "".join(
+        character for character in decomposed
+        if unicodedata.category(character) != "Mn"
+    )
+    return re.sub(r"[^a-z0-9]+", " ", without_marks).strip()
+
+
+def _destination_name_matches(name: Any, destination: str) -> bool:
+    if not isinstance(name, str):
+        return False
+    return _normalized_search_text(name) == _normalized_search_text(destination)
 
 
 SYSTEM_PROMPT = """Bạn là trợ lý tư vấn du lịch tiếng Việt.
@@ -210,7 +226,10 @@ class ChatOrchestrator:
                 call.evidence_kind == "destination_location"
                 and call.destination is not None
             ):
-                coordinates = self._first_result_coordinates(execution)
+                coordinates = self._first_result_coordinates(
+                    execution,
+                    destination=call.destination,
+                )
                 if coordinates is not None:
                     destination_coordinates[call.destination] = coordinates
         return executions
@@ -218,17 +237,32 @@ class ChatOrchestrator:
     @staticmethod
     def _first_result_coordinates(
         execution: ToolExecution,
+        *,
+        destination: str | None = None,
     ) -> tuple[float, float] | None:
         if not execution.success:
             return None
         try:
             payload = json.loads(execution.content)
-            result = payload["data"]["results"][0]
-            longitude = float(result["longitude"])
-            latitude = float(result["latitude"])
-        except (KeyError, IndexError, TypeError, ValueError):
+            results = payload["data"]["results"]
+            if not isinstance(results, list):
+                return None
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                result_name = result.get("name")
+                if (
+                    destination is not None
+                    and isinstance(result_name, str)
+                    and not _destination_name_matches(result_name, destination)
+                ):
+                    continue
+                longitude = float(result["longitude"])
+                latitude = float(result["latitude"])
+                return longitude, latitude
+        except (KeyError, TypeError, ValueError):
             return None
-        return longitude, latitude
+        return None
 
     @staticmethod
     def _build_answer_messages(

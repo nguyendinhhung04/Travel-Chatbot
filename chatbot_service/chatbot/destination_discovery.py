@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 import logging
 import sys
 from collections.abc import Sequence
@@ -24,6 +26,19 @@ from chatbot.tools.registry import (
     ToolExecution,
     ToolRegistry,
 )
+
+
+def _destination_name_matches(name: Any, destination: str) -> bool:
+    if not isinstance(name, str):
+        return False
+    def normalize(value: str) -> str:
+        decomposed = unicodedata.normalize("NFD", value.casefold().replace("đ", "d"))
+        without_marks = "".join(
+            character for character in decomposed
+            if unicodedata.category(character) != "Mn"
+        )
+        return re.sub(r"[^a-z0-9]+", " ", without_marks).strip()
+    return normalize(name) == normalize(destination)
 
 MAX_DESTINATION_CANDIDATES = 5
 logger = logging.getLogger(__name__)
@@ -172,7 +187,10 @@ class DestinationDiscoveryPipeline:
                 executions,
             )
             if destination_execution is not None:
-                coordinates = self._first_result_coordinates(destination_execution)
+                coordinates = self._first_result_coordinates(
+                    destination_execution,
+                    destination=destination_call.destination if destination_call else None,
+                )
 
         category_call = next(
             (call for call in planned_calls if call.evidence_kind == "poi"),
@@ -273,15 +291,30 @@ class DestinationDiscoveryPipeline:
     @staticmethod
     def _first_result_coordinates(
         execution: ToolExecution,
+        *,
+        destination: str | None = None,
     ) -> tuple[float, float] | None:
         if not execution.success:
             return None
         try:
             payload = json.loads(execution.content)
-            result = payload["data"]["results"][0]
-            return float(result["longitude"]), float(result["latitude"])
-        except (KeyError, IndexError, TypeError, ValueError):
+            results = payload["data"]["results"]
+            if not isinstance(results, list):
+                return None
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                result_name = result.get("name")
+                if (
+                    destination is not None
+                    and isinstance(result_name, str)
+                    and not _destination_name_matches(result_name, destination)
+                ):
+                    continue
+                return float(result["longitude"]), float(result["latitude"])
+        except (KeyError, TypeError, ValueError):
             return None
+        return None
 
     @staticmethod
     def _candidate_resolution_call(
