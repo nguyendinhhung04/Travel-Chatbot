@@ -4,10 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import ChatComposer from "@/components/chat-composer";
 import ChatEmptyState from "@/components/chat-empty-state";
 import ChatMessage from "@/components/chat-message";
+import QuickRecommendations from "@/components/quick-recommendations";
+import { getMockRecommendations } from "@/data/mock-recommendations";
 import type {
   ChatErrorResponse,
   ChatMessage as ChatMessageType,
   ChatPlace,
+  PlaceRecommendation,
   ChatSource,
   ChatSuccessResponse,
   CurrentLocationToolCallResponse,
@@ -108,6 +111,18 @@ function isPlaceList(value: unknown): value is ChatPlace[] {
   return Array.isArray(value) && value.every(isPlace);
 }
 
+function isRecommendation(value: unknown): value is PlaceRecommendation {
+  if (!isPlace(value)) return false;
+  const recommendation = value as PlaceRecommendation;
+  return (
+    typeof recommendation.category === "string" &&
+    typeof recommendation.distance === "string" &&
+    (recommendation.accent === "sunset" ||
+      recommendation.accent === "river" ||
+      recommendation.accent === "garden")
+  );
+}
+
 function getErrorMessage(value: unknown) {
   if (
     typeof value === "object" &&
@@ -145,6 +160,9 @@ export default function ChatWindow({
               (message) => ({
                 ...message,
                 id: crypto.randomUUID(),
+                recommendations: Array.isArray(message.recommendations)
+                  ? message.recommendations.filter(isRecommendation)
+                  : [],
               }),
             );
             setMessages(restoredMessages);
@@ -247,17 +265,20 @@ export default function ChatWindow({
     return payload;
   }
 
-  function appendAssistantAnswer(payload: ChatSuccessResponse) {
+  function appendAssistantAnswer(payload: ChatSuccessResponse, question: string) {
+    const recommendations = getMockRecommendations(question);
+    const places = [...(payload.places ?? []), ...recommendations];
     const assistantMessage: ChatMessageType = {
       id: crypto.randomUUID(),
       role: "assistant",
       content: payload.answer,
       sources: payload.sources,
-      places: payload.places ?? [],
+      places,
+      recommendations,
     };
 
     setMessages((current) => trimMessages([...current, assistantMessage]));
-    onPlacesReceived(payload.places ?? []);
+    onPlacesReceived(places);
     setInput("");
   }
 
@@ -291,7 +312,7 @@ export default function ChatWindow({
       }
 
       if (!isSuccessResponse(payload)) throw new Error(DEFAULT_ERROR);
-      appendAssistantAnswer(payload);
+      appendAssistantAnswer(payload, question);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : DEFAULT_ERROR);
     } finally {
@@ -309,6 +330,11 @@ export default function ChatWindow({
       // Ignore storage cleanup failures.
     }
   }
+
+  const latestMessage = messages.at(-1);
+  const recommendations = latestMessage?.role === "assistant"
+    ? latestMessage.recommendations ?? []
+    : [];
 
   return (
     <section className="chat-shell" aria-label="Trợ lý du lịch">
@@ -353,6 +379,12 @@ export default function ChatWindow({
         {error ? <p className="error-message" role="alert">{error}</p> : null}
         {loading ? <p className="loading-message">Đang trả lời<span className="loading-dots" aria-hidden="true">...</span></p> : null}
       </div>
+
+      <QuickRecommendations
+        recommendations={recommendations}
+        onPlaceHover={onPlaceHover}
+        onPlaceClick={onPlaceClick}
+      />
 
       <ChatComposer
         value={input}

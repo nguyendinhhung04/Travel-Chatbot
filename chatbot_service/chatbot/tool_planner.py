@@ -105,6 +105,18 @@ def plan_tools(
             )
         )
 
+    # A place-details question can arrive with only the generic answer action.
+    # The named destination is still an explicit Mapbox lookup target, so do
+    # not let a missing LLM action silently turn it into RAG-only answering.
+    if (
+        interpretation.primary_intent == TravelIntent.PLACE_DETAILS
+        and SemanticActionType.FIND_NAMED_PLACE not in action_types
+        and _needs_destination_lookup(interpretation)
+    ):
+        destination_call = _plan_place_details_destination_call(interpretation)
+        if destination_call is not None:
+            calls.append(destination_call)
+
     if (
         interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
         and SemanticActionType.DISCOVER_PLACES in action_types
@@ -171,6 +183,39 @@ def _plan_destination_forward_call(
             "language": "vi",
             "limit": DESTINATION_FORWARD_RESULT_LIMIT,
             "types": destination_types,
+            "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
+            "auto_complete": False,
+        },
+        destination=destination,
+        evidence_kind="destination_location",
+    )
+
+
+def _plan_place_details_destination_call(
+    interpretation: SemanticInterpretation,
+) -> PlannedToolCall | None:
+    destination = _primary_destination(interpretation)
+    if destination is None:
+        return None
+
+    target = interpretation.entities.search_target
+    target_types = (
+        target.value
+        if target in {
+            SearchTargetType.COUNTRY,
+            SearchTargetType.CITY,
+            SearchTargetType.ADDRESS,
+            SearchTargetType.PLACE,
+        }
+        else "city,place"
+    )
+    return PlannedToolCall(
+        MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+        {
+            "q": destination,
+            "language": "vi",
+            "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
+            "types": target_types,
             "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
             "auto_complete": False,
         },

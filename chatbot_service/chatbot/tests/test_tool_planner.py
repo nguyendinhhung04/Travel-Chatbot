@@ -114,6 +114,35 @@ class ToolPlannerTests(SimpleTestCase):
             },
         )
 
+    def test_place_details_city_falls_back_to_destination_forward_search(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_DETAILS,
+            actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
+            entities=SemanticEntities(
+                destinations=["Đà Lạt"],
+                search_target=SearchTargetType.CITY,
+            ),
+        )
+
+        calls = plan_tools(interpretation)
+
+        self.assertEqual(
+            [call.name for call in calls],
+            ["search_travel_knowledge", "mapbox_forward_search"],
+        )
+        self.assertEqual(
+            calls[1].arguments,
+            {
+                "q": "Đà Lạt",
+                "language": "vi",
+                "limit": 5,
+                "types": "city",
+                "rank_strategy": "relevance",
+                "auto_complete": False,
+            },
+        )
+        self.assertEqual(calls[1].evidence_kind, "destination_location")
+
     def test_named_poi_uses_explicit_distance_and_rating(self):
         interpretation = build_interpretation(
             intent=TravelIntent.PLACE_SEARCH,

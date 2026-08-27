@@ -199,6 +199,9 @@ Chọn đúng một primary_intent:
 Quy tắc:
 - Có thể tạo nhiều action nhưng không tạo tên tool, canonicalId, route hoặc dữ liệu giả.
 - Tên/POI cụ thể dùng find_named_place; nhu cầu khám phá mở dùng discover_places.
+  Với place_details như "Đà Lạt ở đâu" hoặc "Hà Nội nằm ở đâu", luôn thêm
+  find_named_place khi entities.destinations có tên địa danh và đặt search_target
+  phù hợp (city/country/address/place).
   Với find_named_place, đặt entities.search_target đúng loại poi, address, city,
   country hoặc place.
 - Phân biệt địa điểm cần tìm với địa điểm làm mốc:

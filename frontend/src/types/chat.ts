@@ -20,6 +20,12 @@ export type ChatPlace = {
   latitude: number;
 };
 
+export type PlaceRecommendation = ChatPlace & {
+  category: string;
+  distance: string;
+  accent: "sunset" | "river" | "garden";
+};
+
 export type UserLocation = {
   longitude: number;
   latitude: number;
@@ -49,4 +55,5 @@ export type ChatMessage = {
   content: string;
   sources?: ChatSource[];
   places?: ChatPlace[];
+  recommendations?: PlaceRecommendation[];
 };
