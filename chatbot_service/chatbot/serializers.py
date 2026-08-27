@@ -54,7 +54,7 @@ class ChatRequestSerializer(serializers.Serializer):
     history = ConversationMessageSerializer(
         many=True,
         required=False,
-        max_length=12,
+        max_length=6,
     )
     current_location = CurrentLocationSerializer(required=False)
 

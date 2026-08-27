@@ -153,6 +153,8 @@ Request co the gui them context khong luu tru:
 }
 ```
 
+`history` nhan toi da 6 message (3 cap hoi--dap); backend khong luu history vao Django session.
+
 ## Chay Server
 
 ```powershell

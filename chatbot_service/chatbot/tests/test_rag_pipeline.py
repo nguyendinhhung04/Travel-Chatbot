@@ -355,7 +355,7 @@ class ChatAPITests(SimpleTestCase):
                 "message": "Câu hỏi",
                 "history": [
                     {"role": "user", "content": f"Tin nhắn {index}"}
-                    for index in range(13)
+                    for index in range(7)
                 ],
             },
         )
