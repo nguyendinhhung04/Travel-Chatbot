@@ -189,9 +189,12 @@ export default function ChatWindow({
     if (!storageLoaded) return;
     try {
       const completedMessages = withoutPendingUserMessage(messages);
+      const messagesWithoutTemporaryPlaceData = trimMessages(completedMessages).map(
+        ({ role, content, sources }) => ({ role, content, sources }),
+      );
       window.localStorage.setItem(
         CHAT_STORAGE_KEY,
-        JSON.stringify(trimMessages(completedMessages)),
+        JSON.stringify(messagesWithoutTemporaryPlaceData),
       );
     } catch {
       // Continue with in-memory history when browser storage is unavailable.

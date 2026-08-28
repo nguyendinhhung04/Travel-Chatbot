@@ -361,11 +361,91 @@ textarea:disabled {
   cursor: pointer;
 }
 
+.place-mention-wrapper {
+  position: relative;
+  display: inline;
+}
+
 .place-mention:hover,
 .place-mention:focus-visible {
   color: #9d3f2e;
   background: rgba(231, 111, 81, 0.2);
   outline: none;
+}
+
+.place-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  display: block;
+  width: min(320px, 72vw);
+  overflow: hidden;
+  color: #24344c;
+  text-align: left;
+  white-space: normal;
+  background: white;
+  border: 1px solid #d7e0eb;
+  border-radius: 14px;
+  box-shadow: 0 14px 35px rgba(34, 51, 76, 0.2);
+}
+
+.place-card-image {
+  display: block;
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  background: #e8edf4;
+}
+
+.place-card-body {
+  display: grid;
+  gap: 6px;
+  padding: 13px 14px;
+}
+
+.place-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.place-card-heading strong {
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.place-card-status,
+.place-card-category {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.place-card-status-closed {
+  flex: 0 0 auto;
+  color: #a43e32;
+}
+
+.place-card-category {
+  color: #b94e39;
+}
+
+.place-card-line,
+.place-card-link {
+  display: block;
+  color: #5b6b82;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.place-card-link {
+  width: fit-content;
+  color: #355e8b;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .sources {

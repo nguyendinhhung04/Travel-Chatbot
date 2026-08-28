@@ -18,6 +18,23 @@ export type ChatPlace = {
   name: string;
   longitude: number;
   latitude: number;
+  fullAddress?: string | null;
+  brand?: string | null;
+  primaryCategory?: string | null;
+  categories?: string[];
+  openingHours?: string | null;
+  permanentlyClosed?: boolean | null;
+  phone?: string | null;
+  website?: string | null;
+  operationalStatus?: string | null;
+  rating?: number | null;
+  popularity?: number | null;
+  photos?: Array<{
+    url: string;
+    width?: number | null;
+    height?: number | null;
+    source?: string | null;
+  }>;
 };
 
 export type PlaceRecommendation = ChatPlace & {

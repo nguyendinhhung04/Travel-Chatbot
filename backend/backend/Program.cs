@@ -43,6 +43,7 @@ builder.Services.AddTransient<MapboxForwardSearchTool>();
 builder.Services.AddTransient<MapboxCategorySearchTool>();
 builder.Services.AddTransient<MapboxReverseLookupTool>();
 builder.Services.AddTransient<MapboxCandidateResolverTool>();
+builder.Services.AddTransient<MapboxPlacesDetailsTool>();
 
 var app = builder.Build();
 

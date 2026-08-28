@@ -16,11 +16,69 @@ from chatbot.tools.models import (
     MapboxCandidateInput,
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
+    MapboxPlacesDetailsInput,
     MapboxReverseLookupInput,
 )
 
 
 class MapboxToolClientTests(SimpleTestCase):
+    def test_retrieve_place_details_posts_one_batch(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = (request.url.path, json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {
+                        "results": [{
+                            "mapboxId": "mapbox.poi.1",
+                            "name": "Cafe Example",
+                            "fullAddress": "Hà Nội",
+                            "primaryCategory": "cafe",
+                            "categories": ["cafe"],
+                            "openingHours": "Mo-Su 07:00-22:00",
+                            "permanentlyClosed": False,
+                            "phone": "+84123456789",
+                            "website": "https://example.test",
+                            "status": "active",
+                            "longitude": 105.8,
+                            "latitude": 21.0,
+                            "popularity": 0.9,
+                            "photos": [{
+                                "url": "https://images.example.test/place.jpg",
+                                "width": 1200,
+                                "height": 800,
+                                "source": "web",
+                            }],
+                        }],
+                        "missing": [],
+                        "unprocessed": [],
+                    },
+                },
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            result = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            ).retrieve_place_details(
+                MapboxPlacesDetailsInput(ids=["mapbox.poi.1"])
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            captured,
+            (
+                "/api/chatbot/tools/mapbox-place-details-batch",
+                {"ids": ["mapbox.poi.1"]},
+            ),
+        )
+        self.assertEqual(result.data.results[0].primary_category, "cafe")
+        self.assertEqual(result.data.results[0].photos[0].width, 1200)
+
     def test_resolve_candidates_posts_batch_contract(self):
         captured = None
 

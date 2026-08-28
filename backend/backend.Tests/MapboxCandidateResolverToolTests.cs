@@ -259,5 +259,9 @@ public sealed class MapboxCandidateResolverToolTests
         public Task<MapboxRawResponse> ReverseLookupAsync(
             MapboxReverseLookupRequest request,
             CancellationToken cancellationToken) => Task.FromResult(Response());
+
+        public Task<MapboxRawResponse> RetrievePlacesAsync(
+            IReadOnlyList<string> mapboxIds,
+            CancellationToken cancellationToken) => Task.FromResult(Response());
     }
 }

@@ -149,6 +149,47 @@ class MapboxPlaceSummaryData(ToolModel):
     results: list[MapboxPlaceSummaryItem]
 
 
+class MapboxPlacesDetailsInput(ToolModel):
+    ids: list[NonEmptyString] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_ids(self) -> "MapboxPlacesDetailsInput":
+        if len(set(self.ids)) != len(self.ids):
+            raise ValueError("ids must not contain duplicates")
+        return self
+
+
+class MapboxPlacePhoto(ToolModel):
+    url: NonEmptyString
+    width: int | None = Field(default=None, gt=0)
+    height: int | None = Field(default=None, gt=0)
+    source: str | None = None
+
+
+class MapboxPlaceDetailsItem(ToolModel):
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    full_address: str | None = Field(default=None, alias="fullAddress")
+    brand: str | None = None
+    primary_category: str | None = Field(default=None, alias="primaryCategory")
+    categories: list[str] = Field(default_factory=list)
+    opening_hours: str | None = Field(default=None, alias="openingHours")
+    permanently_closed: bool | None = Field(default=None, alias="permanentlyClosed")
+    phone: str | None = None
+    website: str | None = None
+    status: str | None = None
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    popularity: float | None = Field(default=None, ge=0, le=1)
+    photos: list[MapboxPlacePhoto] = Field(default_factory=list)
+
+
+class MapboxPlacesDetailsData(ToolModel):
+    results: list[MapboxPlaceDetailsItem]
+    missing: list[str] = Field(default_factory=list)
+    unprocessed: list[str] = Field(default_factory=list)
+
+
 class MapboxCandidateInput(ToolModel):
     candidate_id: NonEmptyString = Field(alias="candidateId")
     name: NonEmptyString
@@ -244,6 +285,18 @@ class ChatPlace(ToolModel):
     name: NonEmptyString
     longitude: float = Field(ge=-180, le=180)
     latitude: float = Field(ge=-90, le=90)
+    full_address: str | None = Field(default=None, alias="fullAddress")
+    brand: str | None = None
+    primary_category: str | None = Field(default=None, alias="primaryCategory")
+    categories: list[str] = Field(default_factory=list)
+    opening_hours: str | None = Field(default=None, alias="openingHours")
+    permanently_closed: bool | None = Field(default=None, alias="permanentlyClosed")
+    phone: str | None = None
+    website: str | None = None
+    operational_status: str | None = Field(default=None, alias="operationalStatus")
+    rating: float | None = Field(default=None, ge=0, le=5)
+    popularity: float | None = Field(default=None, ge=0, le=1)
+    photos: list[MapboxPlacePhoto] = Field(default_factory=list)
 
 
 ChatSource = Annotated[
@@ -275,9 +328,13 @@ __all__ = [
     "MapboxCandidateResolveInput",
     "MapboxForwardSearchInput",
     "MapboxPlaceItem",
+    "MapboxPlaceDetailsItem",
+    "MapboxPlacePhoto",
     "MapboxPlaceSummaryData",
     "MapboxPlaceSummaryItem",
     "MapboxPlaceToolData",
+    "MapboxPlacesDetailsData",
+    "MapboxPlacesDetailsInput",
     "MapboxReverseLookupInput",
     "MapboxSource",
     "RagChunk",

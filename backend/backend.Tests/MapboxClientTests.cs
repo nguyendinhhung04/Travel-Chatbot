@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Backend.Mapbox;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Backend.Tests;
@@ -23,7 +24,8 @@ public sealed class MapboxClientTests
         };
         var client = new MapboxClient(
             httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
 
         var response = await client.ForwardSearchAsync(
             new MapboxForwardSearchRequest
@@ -60,7 +62,8 @@ public sealed class MapboxClientTests
         };
         var client = new MapboxClient(
             httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
 
         var response = await client.SearchCategoryAsync(
             " food_and_drink ",
@@ -101,7 +104,8 @@ public sealed class MapboxClientTests
         };
         var client = new MapboxClient(
             httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
 
         var response = await client.ReverseLookupAsync(
             new MapboxReverseLookupRequest
@@ -129,16 +133,47 @@ public sealed class MapboxClientTests
         Assert.Contains("access_token=server-token", handler.RequestUri.Query);
     }
 
+    [Fact]
+    public async Task RetrievePlacesAsync_PostsIdsAndAddsServerToken()
+    {
+        var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"results\":[]}",
+                Encoding.UTF8,
+                "application/json")
+        });
+        var client = new MapboxClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://api.mapbox.com/") },
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
+
+        await client.RetrievePlacesAsync(
+            ["mapbox.poi.1", "mapbox.poi.2"],
+            CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Post, handler.Method);
+        Assert.Equal("/places/v1/details/retrieve", handler.RequestUri?.AbsolutePath);
+        Assert.Contains("access_token=server-token", handler.RequestUri?.Query);
+        Assert.Equal("{\"ids\":[\"mapbox.poi.1\",\"mapbox.poi.2\"]}", handler.RequestBody);
+    }
+
     private sealed class RecordingHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         public Uri? RequestUri { get; private set; }
+        public HttpMethod? Method { get; private set; }
+        public string? RequestBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             RequestUri = request.RequestUri;
-            return Task.FromResult(response);
+            Method = request.Method;
+            RequestBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            return response;
         }
     }
 }

@@ -42,6 +42,49 @@ internal static class MapboxToolResponseParser
         return data with { Results = results };
     }
 
+    public static MapboxPlacesDetailsData ParsePlaceDetails(string json)
+    {
+        var response = JsonSerializer.Deserialize<PlacesDetailsResponse>(json, JsonOptions)
+                       ?? throw InvalidResponse();
+        var results = (response.Results ?? []).Select(place =>
+        {
+            if (string.IsNullOrWhiteSpace(place.MapboxId)
+                || string.IsNullOrWhiteSpace(place.Name)
+                || place.Coordinates?.Longitude is null
+                || place.Coordinates.Latitude is null)
+            {
+                throw InvalidResponse();
+            }
+
+            var photos = (place.Photos ?? [])
+                .Where(photo => !string.IsNullOrWhiteSpace(photo.Url))
+                .Select(photo => new MapboxPlacePhoto(
+                    photo.Url!, photo.Width, photo.Height, photo.Source))
+                .ToArray();
+            return new MapboxPlaceDetailsItem(
+                place.MapboxId,
+                place.Name,
+                place.FullAddress,
+                place.Brand,
+                place.PrimaryCategory,
+                place.Categories ?? [],
+                place.OpeningHours,
+                place.PermanentlyClosed,
+                place.Phone,
+                place.Website,
+                place.Status,
+                place.Coordinates.Longitude.Value,
+                place.Coordinates.Latitude.Value,
+                place.Score?.Popularity,
+                photos);
+        }).ToArray();
+
+        return new MapboxPlacesDetailsData(
+            results,
+            response.Missing ?? [],
+            response.Unprocessed ?? []);
+    }
+
     private static MapboxPlaceItem ParsePlace(Feature feature)
     {
         var properties = feature.Properties ?? throw InvalidResponse();
@@ -180,6 +223,84 @@ internal static class MapboxToolResponseParser
 
         [JsonPropertyName("latitude")]
         public double? Latitude { get; init; }
+    }
+
+    private sealed class PlacesDetailsResponse
+    {
+        [JsonPropertyName("results")]
+        public List<PlaceDetails>? Results { get; init; }
+
+        [JsonPropertyName("missing")]
+        public List<string>? Missing { get; init; }
+
+        [JsonPropertyName("unprocessed")]
+        public List<string>? Unprocessed { get; init; }
+    }
+
+    private sealed class PlaceDetails
+    {
+        [JsonPropertyName("mapbox_id")]
+        public string? MapboxId { get; init; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("full_address")]
+        public string? FullAddress { get; init; }
+
+        [JsonPropertyName("brand")]
+        public string? Brand { get; init; }
+
+        [JsonPropertyName("primary_category")]
+        public string? PrimaryCategory { get; init; }
+
+        [JsonPropertyName("categories")]
+        public List<string>? Categories { get; init; }
+
+        [JsonPropertyName("opening_hours")]
+        public string? OpeningHours { get; init; }
+
+        [JsonPropertyName("permanently_closed")]
+        public bool? PermanentlyClosed { get; init; }
+
+        [JsonPropertyName("phone")]
+        public string? Phone { get; init; }
+
+        [JsonPropertyName("website")]
+        public string? Website { get; init; }
+
+        [JsonPropertyName("status")]
+        public string? Status { get; init; }
+
+        [JsonPropertyName("coordinates")]
+        public Coordinates? Coordinates { get; init; }
+
+        [JsonPropertyName("score")]
+        public PlaceScore? Score { get; init; }
+
+        [JsonPropertyName("photos")]
+        public List<PlacePhoto>? Photos { get; init; }
+    }
+
+    private sealed class PlaceScore
+    {
+        [JsonPropertyName("popularity")]
+        public double? Popularity { get; init; }
+    }
+
+    private sealed class PlacePhoto
+    {
+        [JsonPropertyName("url")]
+        public string? Url { get; init; }
+
+        [JsonPropertyName("width")]
+        public int? Width { get; init; }
+
+        [JsonPropertyName("height")]
+        public int? Height { get; init; }
+
+        [JsonPropertyName("source")]
+        public string? Source { get; init; }
     }
 
 }

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import logging
 import re
 import unicodedata
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from django.conf import settings
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -28,7 +31,13 @@ from chatbot.semantic import (
 )
 from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
-from chatbot.tools.models import ChatPlace, ChatSource
+from chatbot.tools.models import (
+    ChatPlace,
+    ChatSource,
+    MapboxPlacesDetailsData,
+    MapboxPlacesDetailsInput,
+    ToolResult,
+)
 from chatbot.tools.registry import ToolExecution, ToolRegistry
 
 
@@ -39,6 +48,21 @@ def _normalized_search_text(value: str) -> str:
         if unicodedata.category(character) != "Mn"
     )
     return re.sub(r"[^a-z0-9]+", " ", without_marks).strip()
+
+
+def _is_places_details_poi_id(mapbox_id: str) -> bool:
+    """Return whether a Mapbox ID identifies a Places Details POI record."""
+    encoded = mapbox_id.strip()
+    padding = "=" * ((4 - len(encoded) % 4) % 4)
+    try:
+        decoded = base64.b64decode(
+            encoded + padding,
+            altchars=b"-_",
+            validate=True,
+        ).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return False
+    return decoded.startswith("urn:mbxpoi:")
 
 
 def _destination_name_matches(name: Any, destination: str) -> bool:
@@ -70,6 +94,12 @@ NO_TOOL_CONTEXT = "Không có dữ liệu tool cho yêu cầu này."
 
 
 CURRENT_LOCATION_TOOL_NAME = "get_current_location"
+logger = logging.getLogger(__name__)
+
+PlaceDetailsLoader = Callable[
+    [MapboxPlacesDetailsInput],
+    ToolResult[MapboxPlacesDetailsData],
+]
 
 
 class ToolInfrastructureError(RuntimeError):
@@ -95,6 +125,7 @@ class ChatOrchestrator:
         *,
         semantic_interpreter: SemanticInterpreter | None = None,
         candidate_generator: DestinationCandidateGenerator | None = None,
+        place_details_loader: PlaceDetailsLoader | None = None,
         max_tool_calls: int | None = None,
     ) -> None:
         resolved_max_calls = (
@@ -116,6 +147,7 @@ class ChatOrchestrator:
             semantic_interpreter or SemanticInterpreter(chat_model)
         )
         self._candidate_generator = candidate_generator
+        self._place_details_loader = place_details_loader
         self._max_tool_calls = resolved_max_calls
 
     def answer(
@@ -188,15 +220,16 @@ class ChatOrchestrator:
         )
         self._print_model_response(response)
         answer = self._normalized_response_text(response)
+        places = self._collect_answer_places(
+            answer,
+            executions,
+            destination_evidence,
+        )
         return ChatOrchestratorResult(
             answer=answer,
             sources=sources,
             interpretation=interpretation,
-            places=self._collect_answer_places(
-                answer,
-                executions,
-                destination_evidence,
-            ),
+            places=self._enrich_answer_places(places),
         )
 
     def _execute_plan(
@@ -538,6 +571,10 @@ class ChatOrchestrator:
                     "names": [],
                     "longitude": longitude,
                     "latitude": latitude,
+                    "fullAddress": value.get("fullAddress"),
+                    "categories": value.get("poiCategories") or [],
+                    "operationalStatus": value.get("operationalStatus"),
+                    "rating": value.get("rating"),
                 },
             )
             clean_name = name.strip()
@@ -593,9 +630,74 @@ class ChatOrchestrator:
                     name=display_name,
                     longitude=candidate["longitude"],
                     latitude=candidate["latitude"],
+                    fullAddress=candidate["fullAddress"],
+                    categories=candidate["categories"],
+                    operationalStatus=candidate["operationalStatus"],
+                    rating=candidate["rating"],
                 )
             )
         return places
+
+    def _enrich_answer_places(self, places: list[ChatPlace]) -> list[ChatPlace]:
+        if not places or self._place_details_loader is None:
+            return places
+
+        eligible_places = [
+            place
+            for place in places
+            if _is_places_details_poi_id(place.mapbox_id)
+        ]
+        skipped_count = len(places) - len(eligible_places)
+        if skipped_count:
+            logger.info(
+                "Skipped Mapbox Places enrichment for %d non-POI place(s)",
+                skipped_count,
+            )
+        if not eligible_places:
+            return places
+
+        try:
+            result = self._place_details_loader(
+                MapboxPlacesDetailsInput(
+                    ids=[place.mapbox_id for place in eligible_places]
+                )
+            )
+        except Exception as error:
+            logger.warning(
+                "Mapbox Places enrichment failed (%s)",
+                type(error).__name__,
+            )
+            return places
+        if not result.success or result.data is None:
+            return places
+
+        details_by_id = {
+            detail.mapbox_id: detail for detail in result.data.results
+        }
+        enriched: list[ChatPlace] = []
+        for place in places:
+            detail = details_by_id.get(place.mapbox_id)
+            if detail is None:
+                enriched.append(place)
+                continue
+            enriched.append(
+                place.model_copy(
+                    update={
+                        "full_address": detail.full_address or place.full_address,
+                        "brand": detail.brand,
+                        "primary_category": detail.primary_category,
+                        "categories": detail.categories or place.categories,
+                        "opening_hours": detail.opening_hours,
+                        "permanently_closed": detail.permanently_closed,
+                        "phone": detail.phone,
+                        "website": detail.website,
+                        "operational_status": detail.status or place.operational_status,
+                        "popularity": detail.popularity,
+                        "photos": detail.photos,
+                    }
+                )
+            )
+        return enriched
 
     @staticmethod
     def _collect_unique_sources(
@@ -672,6 +774,7 @@ def orchestrate_chat(
             active_registry,
             semantic_interpreter=active_interpreter,
             candidate_generator=active_candidate_generator,
+            place_details_loader=mapbox_client.retrieve_place_details,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,

@@ -15,6 +15,7 @@ public sealed class ChatbotToolsControllerTests
     [InlineData(nameof(ChatbotToolsController.ForwardSearch), "mapbox-forward-search")]
     [InlineData(nameof(ChatbotToolsController.CategorySearch), "mapbox-category-search")]
     [InlineData(nameof(ChatbotToolsController.ReverseLookup), "mapbox-reverse-lookup")]
+    [InlineData(nameof(ChatbotToolsController.RetrievePlaceDetails), "mapbox-place-details-batch")]
     public void Actions_ExposeExpectedPostRoutes(string actionName, string route)
     {
         var controllerRoute = typeof(ChatbotToolsController)
@@ -304,7 +305,8 @@ public sealed class ChatbotToolsControllerTests
         new MapboxReverseLookupTool(client),
         new MapboxCandidateResolverTool(
             new MapboxForwardSearchTool(client),
-            new MapboxCategorySearchTool(client)));
+            new MapboxCategorySearchTool(client)),
+        new MapboxPlacesDetailsTool(client));
 
     private sealed class StubMapboxClient : IMapboxClient
     {
@@ -345,6 +347,15 @@ public sealed class ChatbotToolsControllerTests
         {
             LastCall = "reverse";
             ReverseRequest = request;
+            CancellationToken = cancellationToken;
+            return Complete();
+        }
+
+        public Task<MapboxRawResponse> RetrievePlacesAsync(
+            IReadOnlyList<string> mapboxIds,
+            CancellationToken cancellationToken)
+        {
+            LastCall = "place-details";
             CancellationToken = cancellationToken;
             return Complete();
         }

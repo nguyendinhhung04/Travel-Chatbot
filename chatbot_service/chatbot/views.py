@@ -66,7 +66,12 @@ class ChatAPIView(APIView):
                     source.model_dump(mode="json") for source in result.sources
                 ],
                 "places": [
-                    place.model_dump(mode="json", by_alias=True)
+                    place.model_dump(
+                        mode="json",
+                        by_alias=True,
+                        exclude_none=True,
+                        exclude_defaults=True,
+                    )
                     for place in result.places
                 ],
             },

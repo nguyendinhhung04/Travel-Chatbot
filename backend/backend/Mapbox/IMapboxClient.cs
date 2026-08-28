@@ -14,4 +14,8 @@ public interface IMapboxClient
     Task<MapboxRawResponse> ReverseLookupAsync(
         MapboxReverseLookupRequest request,
         CancellationToken cancellationToken);
+
+    Task<MapboxRawResponse> RetrievePlacesAsync(
+        IReadOnlyList<string> mapboxIds,
+        CancellationToken cancellationToken);
 }

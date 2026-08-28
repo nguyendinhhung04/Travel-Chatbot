@@ -15,6 +15,8 @@ from .models import (
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
     MapboxPlaceSummaryData,
+    MapboxPlacesDetailsData,
+    MapboxPlacesDetailsInput,
     MapboxReverseLookupInput,
     ToolResult,
 )
@@ -28,6 +30,7 @@ TOOL_INVALID_RESPONSE_ERROR = "tool_invalid_response"
 
 _PLACE_SUMMARY_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceSummaryData])
 _CANDIDATE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxCandidateResolutionData])
+_PLACE_DETAILS_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlacesDetailsData])
 _ResultData = TypeVar("_ResultData")
 
 
@@ -90,6 +93,16 @@ class MapboxToolClient:
             "/api/chatbot/tools/mapbox-resolve-candidates",
             request.model_dump(mode="json", by_alias=True, exclude_none=True),
             _CANDIDATE_RESULT_ADAPTER,
+        )
+
+    def retrieve_place_details(
+        self,
+        request: MapboxPlacesDetailsInput,
+    ) -> ToolResult[MapboxPlacesDetailsData]:
+        return self._post(
+            "/api/chatbot/tools/mapbox-place-details-batch",
+            request.model_dump(mode="json"),
+            _PLACE_DETAILS_RESULT_ADAPTER,
         )
 
     def close(self) -> None:

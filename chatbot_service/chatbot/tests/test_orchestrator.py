@@ -32,11 +32,144 @@ from chatbot.semantic import (
     TravelDomain,
 )
 from chatbot.tool_planner import PlannedToolCall
-from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
+from chatbot.tools.models import (
+    ChatPlace,
+    KnowledgeBaseSource,
+    MapboxPlaceDetailsItem,
+    MapboxPlacePhoto,
+    MapboxPlacesDetailsData,
+    MapboxSource,
+    ToolResult,
+)
 from chatbot.tools.registry import ToolExecution
 
 
 class ChatOrchestratorTests(SimpleTestCase):
+    def test_enrich_answer_places_calls_one_batch_and_merges_details(self):
+        cafe_id = "dXJuOm1ieHBvaTpjYWZlLWV4YW1wbGU"
+        missing_id = "dXJuOm1ieHBvaTptaXNzaW5n"
+        captured_ids = []
+
+        def load_details(request):
+            captured_ids.append(request.ids)
+            return ToolResult[
+                MapboxPlacesDetailsData
+            ].model_validate({
+                "success": True,
+                "data": MapboxPlacesDetailsData(
+                    results=[
+                        MapboxPlaceDetailsItem(
+                            mapboxId=cafe_id,
+                            name="Cafe Example",
+                            fullAddress="1 Example Street",
+                            primaryCategory="cafe",
+                            categories=["cafe"],
+                            openingHours="Mo-Su 07:00-22:00",
+                            permanentlyClosed=False,
+                            phone="+84123456789",
+                            website="https://example.test",
+                            status="active",
+                            longitude=105.8,
+                            latitude=21.0,
+                            popularity=0.9,
+                            photos=[MapboxPlacePhoto(
+                                url="https://images.example.test/place.jpg"
+                            )],
+                        )
+                    ]
+                ),
+            })
+
+        orchestrator = ChatOrchestrator(
+            StubChatModel([]),
+            StubRegistry(),
+            semantic_interpreter=StubInterpreter(None),
+            place_details_loader=load_details,
+        )
+        places = orchestrator._enrich_answer_places([
+            ChatPlace(
+                mapboxId=cafe_id,
+                name="Cafe Example",
+                longitude=105.8,
+                latitude=21.0,
+            ),
+            ChatPlace(
+                mapboxId=missing_id,
+                name="Missing Place",
+                longitude=105.9,
+                latitude=21.1,
+            ),
+        ])
+
+        self.assertEqual(captured_ids, [[cafe_id, missing_id]])
+        self.assertEqual(places[0].opening_hours, "Mo-Su 07:00-22:00")
+        self.assertEqual(places[0].photos[0].source, None)
+        self.assertIsNone(places[1].opening_hours)
+
+    def test_enrich_answer_places_excludes_non_poi_ids_from_batch(self):
+        poi_id = "dXJuOm1ieHBvaTpjYWZlLWV4YW1wbGU"
+        city_id = "dXJuOm1ieHBsYzpSUFE"
+        captured_ids = []
+
+        def load_details(request):
+            captured_ids.append(request.ids)
+            return ToolResult[MapboxPlacesDetailsData].model_validate({
+                "success": True,
+                "data": {"results": []},
+            })
+
+        orchestrator = ChatOrchestrator(
+            StubChatModel([]),
+            StubRegistry(),
+            semantic_interpreter=StubInterpreter(None),
+            place_details_loader=load_details,
+        )
+        places = [
+            ChatPlace(
+                mapboxId=poi_id,
+                name="Cafe Example",
+                longitude=105.8,
+                latitude=21.0,
+            ),
+            ChatPlace(
+                mapboxId=city_id,
+                name="New York",
+                longitude=-74.006,
+                latitude=40.7128,
+            ),
+        ]
+
+        enriched = orchestrator._enrich_answer_places(places)
+
+        self.assertEqual(captured_ids, [[poi_id]])
+        self.assertEqual(enriched, places)
+
+    def test_enrich_answer_places_skips_batch_when_no_poi_ids_exist(self):
+        loader_called = False
+
+        def load_details(_request):
+            nonlocal loader_called
+            loader_called = True
+            raise AssertionError("Places Details should not be called")
+
+        orchestrator = ChatOrchestrator(
+            StubChatModel([]),
+            StubRegistry(),
+            semantic_interpreter=StubInterpreter(None),
+            place_details_loader=load_details,
+        )
+        places = [ChatPlace(
+            mapboxId="dXJuOm1ieHBsYzpSUFE",
+            name="New York",
+            longitude=-74.006,
+            latitude=40.7128,
+        )]
+
+        enriched = orchestrator._enrich_answer_places(places)
+
+        self.assertFalse(loader_called)
+        self.assertEqual(enriched, places)
+
     def test_destination_coordinates_ignore_fuzzy_result_with_wrong_name(self):
         execution = ToolExecution(
             content=(
@@ -176,7 +309,10 @@ class ChatOrchestratorTests(SimpleTestCase):
         )
 
         self.assertEqual(
-            [place.model_dump(by_alias=True) for place in places],
+            [
+                place.model_dump(by_alias=True, exclude_none=True, exclude_defaults=True)
+                for place in places
+            ],
             [
                 {
                     "mapboxId": "mapbox.ho",

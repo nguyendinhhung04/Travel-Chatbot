@@ -11,7 +11,8 @@ public sealed class ChatbotToolsController(
     MapboxForwardSearchTool forwardSearchTool,
     MapboxCategorySearchTool categorySearchTool,
     MapboxReverseLookupTool reverseLookupTool,
-    MapboxCandidateResolverTool candidateResolverTool) : ControllerBase
+    MapboxCandidateResolverTool candidateResolverTool,
+    MapboxPlacesDetailsTool placesDetailsTool) : ControllerBase
 {
     [HttpPost("mapbox-forward-search")]
     [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status200OK)]
@@ -72,6 +73,19 @@ public sealed class ChatbotToolsController(
         var result = await candidateResolverTool.ExecuteAsync(
             request.ToResolutionRequest(),
             cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("mapbox-place-details-batch")]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status504GatewayTimeout)]
+    public async Task<IActionResult> RetrievePlaceDetails(
+        [FromBody] MapboxPlacesDetailsHttpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await placesDetailsTool.ExecuteAsync(request, cancellationToken);
         return ToActionResult(result);
     }
 
