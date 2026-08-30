@@ -21,6 +21,12 @@ from chatbot.destination_discovery import (
     DestinationDiscoveryPipeline,
 )
 from chatbot.intent import TravelIntent
+from chatbot.itinerary_making import (
+    ItineraryCandidateGenerator,
+    ItineraryMakingData,
+    ItineraryMakingPipeline,
+)
+from chatbot.itinerary_management import ItineraryManagementPipeline
 from chatbot.rag.rag_chain import get_chat_model, normalize_answer
 from chatbot.response_policy import response_policy_for
 from chatbot.semantic import (
@@ -34,6 +40,7 @@ from chatbot.tools.mapbox_client import MapboxToolClient
 from chatbot.tools.models import (
     ChatPlace,
     ChatSource,
+    ItineraryData,
     MapboxPlacesDetailsData,
     MapboxPlacesDetailsInput,
     ToolResult,
@@ -80,7 +87,17 @@ Dùng đúng phân tích, chính sách nguồn, dữ liệu backend và lịch s
   điểm chỉ vì thiếu rating.
 - Với needs_clarification, chỉ hỏi thông tin còn thiếu. Với unsupported, nói rõ
   giới hạn; không giả vờ đã chỉ đường, đọc giao thông thời gian thực hoặc lưu dữ liệu.
-- Lịch trình chỉ là tư vấn văn bản, không tuyên bố đã lưu hay tối ưu tuyến đường.
+- Không tự tạo trạng thái lưu; với itinerary_advice không tuyên bố đã lưu.
+  Với itinerary_making,
+  chỉ nói lịch trình đã được tạo và lưu khi backend trả success=true cùng itinerary hợp lệ;
+  nếu thất bại, không tự tạo route hoặc tuyên bố đã lưu.
+  Với itinerary_advice,
+  lịch trình chỉ là tư vấn văn bản.
+  Với itinerary_making,
+  chỉ nói tuyến đã được tối ưu khi backend trả success=true và itinerary hợp lệ;
+  nếu thất bại, không tự tạo thứ tự, khoảng cách hoặc hình học tuyến đường.
+  Với itinerary_management, chỉ nói đã thay đổi/lưu khi backend trả success=true
+  và itinerary có phiên bản mới; nếu thất bại phải giải thích theo errorCode.
 - Trả lời tự nhiên, có nhận định và đủ giúp người dùng quyết định. Dùng plain text,
   không dùng bảng hoặc Markdown phức tạp.
 - Khi nhắc địa điểm có trong dữ liệu Mapbox, phải giữ nguyên trường `name` của
@@ -113,6 +130,8 @@ class ChatOrchestratorResult:
     interpretation: SemanticInterpretation | None = None
     places: list[ChatPlace] = field(default_factory=list)
     client_tool_call: str | None = None
+    itinerary: ItineraryMakingData | ItineraryData | None = None
+    itinerary_operation: dict[str, Any] | None = None
 
 
 class ChatOrchestrator:
@@ -125,6 +144,7 @@ class ChatOrchestrator:
         *,
         semantic_interpreter: SemanticInterpreter | None = None,
         candidate_generator: DestinationCandidateGenerator | None = None,
+        itinerary_candidate_generator: ItineraryCandidateGenerator | None = None,
         place_details_loader: PlaceDetailsLoader | None = None,
         max_tool_calls: int | None = None,
     ) -> None:
@@ -147,6 +167,7 @@ class ChatOrchestrator:
             semantic_interpreter or SemanticInterpreter(chat_model)
         )
         self._candidate_generator = candidate_generator
+        self._itinerary_candidate_generator = itinerary_candidate_generator
         self._place_details_loader = place_details_loader
         self._max_tool_calls = resolved_max_calls
 
@@ -156,15 +177,22 @@ class ChatOrchestrator:
         *,
         history: Sequence[ConversationMessage] = (),
         current_location: SemanticLocation | None = None,
+        active_itinerary_id: str | None = None,
+        active_itinerary_version: int | None = None,
     ) -> ChatOrchestratorResult:
         cleaned_question = question.strip()
         if not cleaned_question:
             raise ValueError("question must not be empty")
 
+        interpretation_arguments: dict[str, Any] = {
+            "history": history,
+            "current_location": current_location,
+        }
+        if active_itinerary_id is not None:
+            interpretation_arguments["active_itinerary_id"] = active_itinerary_id
         interpretation = self._semantic_interpreter.interpret(
             cleaned_question,
-            history=history,
-            current_location=current_location,
+            **interpretation_arguments,
         )
         if (
             current_location is None
@@ -180,6 +208,9 @@ class ChatOrchestrator:
                 client_tool_call=CURRENT_LOCATION_TOOL_NAME,
             )
         destination_evidence: dict[str, Any] | None = None
+        itinerary_evidence: dict[str, Any] | None = None
+        itinerary: ItineraryMakingData | ItineraryData | None = None
+        itinerary_operation: dict[str, Any] | None = None
         tool_plan = plan_tools(interpretation)
         if (
             interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
@@ -199,6 +230,50 @@ class ChatOrchestrator:
             planned_calls = discovery_run.calls
             executions = discovery_run.executions
             destination_evidence = discovery_run.evidence
+        elif (
+            interpretation.primary_intent == TravelIntent.ITINERARY_MAKING
+            and tool_plan
+        ):
+            itinerary_run = ItineraryMakingPipeline(
+                self._chat_model,
+                self._registry,
+                itinerary_creator=lambda call: self._registry.execute(
+                    call.name,
+                    call.arguments,
+                ),
+                candidate_generator=self._itinerary_candidate_generator,
+                max_tool_calls=self._max_tool_calls,
+            ).execute(
+                cleaned_question,
+                history=history,
+                interpretation=interpretation,
+                planned_calls=tool_plan,
+            )
+            planned_calls = itinerary_run.calls
+            executions = itinerary_run.executions
+            itinerary_evidence = itinerary_run.evidence
+            itinerary = itinerary_run.itinerary
+        elif interpretation.primary_intent == TravelIntent.ITINERARY_MANAGEMENT:
+            management_run = ItineraryManagementPipeline(self._registry).execute(
+                interpretation=interpretation,
+                active_itinerary_id=active_itinerary_id,
+                active_itinerary_version=active_itinerary_version,
+            )
+            planned_calls = management_run.calls
+            executions = management_run.executions
+            itinerary_evidence = management_run.evidence
+            itinerary = management_run.itinerary
+            itinerary_operation = {
+                "type": management_run.operation,
+                "success": management_run.itinerary is not None,
+                **(
+                    {}
+                    if management_run.itinerary is not None
+                    else {
+                        "errorCode": management_run.evidence.get("errorCode")
+                    }
+                ),
+            }
         else:
             planned_calls = list(tool_plan[: self._max_tool_calls])
             executions = self._execute_plan(planned_calls)
@@ -212,6 +287,7 @@ class ChatOrchestrator:
             planned_calls=planned_calls,
             executions=executions,
             destination_evidence=destination_evidence,
+            itinerary_evidence=itinerary_evidence,
         )
         response = self._invoke_ai_message(
             self._chat_model,
@@ -230,6 +306,8 @@ class ChatOrchestrator:
             sources=sources,
             interpretation=interpretation,
             places=self._enrich_answer_places(places),
+            itinerary=itinerary,
+            itinerary_operation=itinerary_operation,
         )
 
     def _execute_plan(
@@ -306,8 +384,15 @@ class ChatOrchestrator:
         planned_calls: Sequence[PlannedToolCall],
         executions: Sequence[ToolExecution],
         destination_evidence: dict[str, Any] | None = None,
+        itinerary_evidence: dict[str, Any] | None = None,
     ) -> list[Any]:
-        if destination_evidence is None:
+        if itinerary_evidence is not None:
+            evidence_content = json.dumps(
+                itinerary_evidence,
+                ensure_ascii=False,
+                indent=2,
+            )
+        elif destination_evidence is None:
             evidence_content = ChatOrchestrator._ordinary_evidence_content(
                 planned_calls,
                 executions,
@@ -320,7 +405,11 @@ class ChatOrchestrator:
             )
         response_policy = (
             response_policy_for(interpretation.primary_intent)
-            if planned_calls or destination_evidence is not None
+            if (
+                planned_calls
+                or destination_evidence is not None
+                or itinerary_evidence is not None
+            )
             else None
         )
         prompt_sections = [f"=== HƯỚNG DẪN ===\n{SYSTEM_PROMPT.strip()}"]
@@ -704,10 +793,18 @@ class ChatOrchestrator:
         executions: Sequence[ToolExecution],
     ) -> list[ChatSource]:
         sources: list[ChatSource] = []
-        source_keys: set[str] = set()
+        source_keys: set[tuple[str, str, str]] = set()
         for execution in executions:
             for source in execution.sources:
-                source_key = source.model_dump_json()
+                # Attribution can vary between Mapbox tool responses while the
+                # provider/source identity remains the same. Deduplicate on the
+                # fields exposed in the public source contract so the API does
+                # not send duplicate provider entries to the frontend.
+                source_key = (
+                    source.type,
+                    source.title,
+                    source.source,
+                )
                 if source_key in source_keys:
                     continue
                 source_keys.add(source_key)
@@ -733,19 +830,24 @@ def orchestrate_chat(
     *,
     history: Sequence[ConversationMessage] = (),
     current_location: SemanticLocation | None = None,
+    active_itinerary_id: str | None = None,
+    active_itinerary_version: int | None = None,
     chat_model: Any | None = None,
     registry: ToolRegistry | None = None,
     semantic_interpreter: SemanticInterpreter | None = None,
     candidate_generator: DestinationCandidateGenerator | None = None,
+    itinerary_candidate_generator: ItineraryCandidateGenerator | None = None,
     max_tool_calls: int | None = None,
 ) -> ChatOrchestratorResult:
     """Run one stateless request and close owned HTTP resources."""
     active_model = chat_model or get_chat_model(thinking_level="medium")
     active_interpreter = semantic_interpreter
     active_candidate_generator = candidate_generator
+    active_itinerary_candidate_generator = itinerary_candidate_generator
 
     if chat_model is None and (
-        active_interpreter is None or active_candidate_generator is None
+        active_interpreter is None
+        or active_candidate_generator is None
     ):
         planning_model = get_chat_model(thinking_level="low")
         active_interpreter = active_interpreter or SemanticInterpreter(planning_model)
@@ -760,11 +862,14 @@ def orchestrate_chat(
             registry,
             semantic_interpreter=active_interpreter,
             candidate_generator=active_candidate_generator,
+            itinerary_candidate_generator=active_itinerary_candidate_generator,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,
             history=history,
             current_location=current_location,
+            active_itinerary_id=active_itinerary_id,
+            active_itinerary_version=active_itinerary_version,
         )
 
     with MapboxToolClient() as mapbox_client:
@@ -774,12 +879,15 @@ def orchestrate_chat(
             active_registry,
             semantic_interpreter=active_interpreter,
             candidate_generator=active_candidate_generator,
+            itinerary_candidate_generator=active_itinerary_candidate_generator,
             place_details_loader=mapbox_client.retrieve_place_details,
             max_tool_calls=max_tool_calls,
         ).answer(
             question,
             history=history,
             current_location=current_location,
+            active_itinerary_id=active_itinerary_id,
+            active_itinerary_version=active_itinerary_version,
         )
 
 

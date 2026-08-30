@@ -34,6 +34,7 @@ _RAG_INTENTS = frozenset(
         TravelIntent.DESTINATION_DISCOVERY,
         TravelIntent.PLACE_DETAILS,
         TravelIntent.TRAVEL_QA,
+        TravelIntent.ITINERARY_MAKING,
         TravelIntent.ITINERARY_ADVICE,
         TravelIntent.TRANSPORTATION_QA,
         TravelIntent.BUDGET_QA,
@@ -78,7 +79,10 @@ def plan_tools(
     calls: list[PlannedToolCall] = []
 
     if (
-        SemanticActionType.DISCOVER_PLACES in action_types
+        (
+            SemanticActionType.DISCOVER_PLACES in action_types
+            or interpretation.primary_intent == TravelIntent.ITINERARY_MAKING
+        )
         and _needs_destination_lookup(interpretation)
         and interpretation.primary_intent != TravelIntent.DESTINATION_DISCOVERY
     ):
@@ -173,7 +177,11 @@ def _plan_destination_forward_call(
         return None
     destination_types = (
         "city,place"
-        if interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
+        if interpretation.primary_intent
+        in {
+            TravelIntent.DESTINATION_DISCOVERY,
+            TravelIntent.ITINERARY_MAKING,
+        }
         else "poi,address,city,place"
     )
     return PlannedToolCall(

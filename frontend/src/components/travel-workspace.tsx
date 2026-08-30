@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ChatWindow from "@/components/chat-window";
 import MapPanel from "@/components/map-panel";
-import type { ChatPlace, UserLocation } from "@/types/chat";
+import type { ChatItinerary, ChatPlace, UserLocation } from "@/types/chat";
+import { isPersistedItinerary } from "@/utils/itinerary";
 
 const MIN_CHAT_WIDTH = 28;
 const MAX_CHAT_WIDTH = 55;
@@ -12,6 +13,7 @@ export default function TravelWorkspace() {
   const [chatWidth, setChatWidth] = useState(38);
   const [isDragging, setIsDragging] = useState(false);
   const [places, setPlaces] = useState<ChatPlace[]>([]);
+  const [itinerary, setItinerary] = useState<ChatItinerary | null>(null);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [activePlaceId, setActivePlaceId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{
@@ -28,6 +30,35 @@ export default function TravelWorkspace() {
       return [...byId.values()];
     });
   }, []);
+
+  const updateItinerary = useCallback((nextItinerary: ChatItinerary | null) => {
+    setItinerary(nextItinerary);
+    if (!nextItinerary) return;
+
+    const itineraryPlaceIds = new Set(
+      nextItinerary.stops.map((stop) => stop.mapboxId),
+    );
+    setPlaces((current) =>
+      current.filter((place) => !itineraryPlaceIds.has(place.mapboxId)),
+    );
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/itineraries", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<unknown>;
+      })
+      .then((payload) => {
+        if (isPersistedItinerary(payload)) updateItinerary(payload);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [updateItinerary]);
 
   function handlePlaceHover(place: ChatPlace) {
     setActivePlaceId(place.mapboxId);
@@ -70,7 +101,10 @@ export default function TravelWorkspace() {
       style={{ "--chat-width": `${chatWidth}%` } as React.CSSProperties}
     >
       <ChatWindow
+        activeItineraryId={itinerary?.id ?? null}
+        activeItineraryVersion={itinerary?.version ?? null}
         onPlacesReceived={addPlaces}
+        onItineraryReceived={updateItinerary}
         onCurrentLocationReceived={setUserLocation}
         onPlaceHover={handlePlaceHover}
         onPlaceClick={handlePlaceClick}
@@ -89,6 +123,7 @@ export default function TravelWorkspace() {
       </div>
       <MapPanel
         places={places}
+        itinerary={itinerary}
         userLocation={userLocation}
         activePlaceId={activePlaceId}
         focusRequest={focusRequest}

@@ -1,5 +1,7 @@
 using Backend.Chatbot.Tools.Mapbox;
+using Backend.Itineraries;
 using Backend.Mapbox;
+using MongoDB.Driver;
 using Microsoft.OpenApi;
 using Microsoft.Extensions.Options;
 
@@ -39,11 +41,40 @@ builder.Services.AddHttpClient<IMapboxClient, MapboxClient>((services, client) =
     client.DefaultRequestHeaders.Accept.ParseAdd("application/geo+json, application/json");
 });
 
+builder.Services.AddHttpClient<IMapboxOptimizationClient, MapboxOptimizationClient>(
+    (services, client) =>
+    {
+        var options = services.GetRequiredService<IOptions<MapboxOptions>>().Value;
+        client.BaseAddress = new Uri($"{options.BaseUrl.TrimEnd('/')}/", UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+    });
+
+builder.Services
+    .AddOptions<MongoDbOptions>()
+    .Bind(builder.Configuration.GetSection(MongoDbOptions.SectionName))
+    .ValidateDataAnnotations();
+builder.Services.AddSingleton<IItineraryRepository>(services =>
+{
+    var options = services.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(options.ConnectionString))
+    {
+        return new UnavailableItineraryRepository();
+    }
+    var settings = MongoClientSettings.FromConnectionString(options.ConnectionString);
+    settings.ServerApi = new ServerApi(ServerApiVersion.V1);
+    return new MongoItineraryRepository(
+        new MongoClient(settings),
+        Options.Create(options));
+});
+builder.Services.AddScoped<ItineraryService>();
+
 builder.Services.AddTransient<MapboxForwardSearchTool>();
 builder.Services.AddTransient<MapboxCategorySearchTool>();
 builder.Services.AddTransient<MapboxReverseLookupTool>();
 builder.Services.AddTransient<MapboxCandidateResolverTool>();
 builder.Services.AddTransient<MapboxPlacesDetailsTool>();
+builder.Services.AddTransient<MapboxOptimizationTool>();
 
 var app = builder.Build();
 

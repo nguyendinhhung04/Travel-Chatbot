@@ -158,6 +158,38 @@ public sealed class MapboxClientTests
         Assert.Equal("{\"ids\":[\"mapbox.poi.1\",\"mapbox.poi.2\"]}", handler.RequestBody);
     }
 
+    [Fact]
+    public async Task OptimizationClient_UsesInvariantCoordinatesAndRequiredOptions()
+    {
+        var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"code\":\"Ok\"}",
+                Encoding.UTF8,
+                "application/json")
+        });
+        var client = new MapboxOptimizationClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://api.mapbox.com/") },
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+
+        var response = await client.OptimizeAsync(
+            "driving",
+            [(105.81, 21.01), (105.82, 21.02)],
+            CancellationToken.None);
+
+        Assert.Equal(200, response.StatusCode);
+        Assert.Equal(HttpMethod.Get, handler.Method);
+        Assert.Equal(
+            "/optimized-trips/v1/mapbox/driving/105.81,21.01;105.82,21.02",
+            Uri.UnescapeDataString(handler.RequestUri?.AbsolutePath ?? string.Empty));
+        Assert.Contains("roundtrip=false", handler.RequestUri?.Query);
+        Assert.Contains("source=first", handler.RequestUri?.Query);
+        Assert.Contains("destination=last", handler.RequestUri?.Query);
+        Assert.Contains("geometries=geojson", handler.RequestUri?.Query);
+        Assert.Contains("overview=full", handler.RequestUri?.Query);
+        Assert.Contains("access_token=server-token", handler.RequestUri?.Query);
+    }
+
     private sealed class RecordingHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         public Uri? RequestUri { get; private set; }

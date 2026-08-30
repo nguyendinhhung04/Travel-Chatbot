@@ -1,5 +1,9 @@
 import { useState, type ReactNode } from "react";
-import type { ChatMessage as ChatMessageType, ChatPlace } from "@/types/chat";
+import type {
+  ChatMessage as ChatMessageType,
+  ChatPlace,
+  ChatSource,
+} from "@/types/chat";
 
 /* Mapbox Places returns photo hosts dynamically, so they cannot be safely allowlisted
    for the Next.js image optimizer. The browser loads these temporary provider URLs. */
@@ -21,6 +25,10 @@ function escapeRegExp(value: string) {
 
 function formatCategory(value: string) {
   return value.replaceAll("_", " ");
+}
+
+function sourceIdentity(source: ChatSource) {
+  return JSON.stringify([source.type, source.title, source.source]);
 }
 
 function safeHttpUrl(value: string | null | undefined) {
@@ -194,14 +202,22 @@ export default function ChatMessage({
           <div className="sources" aria-label="Nguồn tham khảo">
             <span className="sources-heading">Nguồn tham khảo</span>
             <ul>
-              {message.sources.map((source) => (
-                <li key={`${source.type}-${source.title}-${source.source}`}>
-                  <span className="source-title">{source.title}</span>
-                  <span className="source-path">
-                    {source.type === "mapbox" ? source.attribution : source.source}
-                  </span>
-                </li>
-              ))}
+              {message.sources
+                .filter(
+                  (source, index, sources) =>
+                    sources.findIndex(
+                      (candidate) =>
+                        sourceIdentity(candidate) === sourceIdentity(source),
+                    ) === index,
+                )
+                .map((source) => (
+                  <li key={sourceIdentity(source)}>
+                    <span className="source-title">{source.title}</span>
+                    <span className="source-path">
+                      {source.type === "mapbox" ? source.attribution : source.source}
+                    </span>
+                  </li>
+                ))}
             </ul>
           </div>
         ) : null}

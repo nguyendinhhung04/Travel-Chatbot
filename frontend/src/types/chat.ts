@@ -37,6 +37,35 @@ export type ChatPlace = {
   }>;
 };
 
+export type ItineraryStop = {
+  mapboxId: string;
+  name: string;
+  longitude: number;
+  latitude: number;
+  reason?: string | null;
+  order: number;
+  inputIndex: number;
+};
+
+export type RouteGeometry = {
+  type: "LineString";
+  coordinates: Array<[number, number]>;
+};
+
+export type ChatItinerary = {
+  id: string;
+  version: number;
+  title: string;
+  destination: string;
+  durationDays: number;
+  durationNights: number;
+  profile: "driving" | "walking" | "cycling";
+  stops: ItineraryStop[];
+  route: RouteGeometry;
+  distanceMeters: number;
+  durationSeconds: number;
+};
+
 export type PlaceRecommendation = ChatPlace & {
   category: string;
   distance: string;
@@ -52,6 +81,12 @@ export type ChatSuccessResponse = {
   answer: string;
   sources: ChatSource[];
   places?: ChatPlace[];
+  itinerary?: ChatItinerary;
+  itineraryOperation?: {
+    type: string | null;
+    success: boolean;
+    errorCode?: string | null;
+  };
 };
 
 export type CurrentLocationToolCallResponse = {

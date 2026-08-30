@@ -7,6 +7,11 @@ from django.test import SimpleTestCase, override_settings
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
+from chatbot.itinerary_making import (
+    ItineraryMakingData,
+    OptimizedItineraryStop,
+    RouteGeometry,
+)
 from chatbot.orchestrator import ChatOrchestratorResult
 from chatbot.rag.rag_chain import (
     INSUFFICIENT_CONTEXT_MESSAGE,
@@ -310,6 +315,80 @@ class RAGChainTests(SimpleTestCase):
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class ChatAPITests(SimpleTestCase):
     @patch("chatbot.views.orchestrate_chat")
+    def test_success_includes_safe_itinerary_contract_in_optimized_order(
+        self,
+        orchestrate_mock,
+    ):
+        orchestrate_mock.return_value = ChatOrchestratorResult(
+            answer="Điểm B rồi Điểm A.",
+            sources=[],
+            itinerary=ItineraryMakingData(
+                title="Hà Nội 3 ngày 2 đêm",
+                destination="Hà Nội",
+                durationDays=3,
+                durationNights=2,
+                profile="driving",
+                stops=[
+                    OptimizedItineraryStop(
+                        mapboxId="poi-2",
+                        name="Điểm B",
+                        longitude=105.9,
+                        latitude=21.1,
+                        reason="Phù hợp lịch trình",
+                        order=1,
+                        inputIndex=1,
+                    ),
+                    OptimizedItineraryStop(
+                        mapboxId="poi-1",
+                        name="Điểm A",
+                        longitude=105.8,
+                        latitude=21.0,
+                        order=2,
+                        inputIndex=0,
+                    ),
+                ],
+                route=RouteGeometry(
+                    type="LineString",
+                    coordinates=[(105.9, 21.1), (105.8, 21.0)],
+                ),
+                distanceMeters=2500,
+                durationSeconds=900,
+            ),
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data={"message": "Lên lịch trình Hà Nội 3 ngày 2 đêm"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(
+            set(payload),
+            {"answer", "sources", "places", "itinerary"},
+        )
+        self.assertEqual(
+            [stop["order"] for stop in payload["itinerary"]["stops"]],
+            [1, 2],
+        )
+        self.assertEqual(
+            [stop["mapboxId"] for stop in payload["itinerary"]["stops"]],
+            ["poi-2", "poi-1"],
+        )
+        self.assertEqual(
+            payload["itinerary"]["route"],
+            {
+                "type": "LineString",
+                "coordinates": [[105.9, 21.1], [105.8, 21.0]],
+            },
+        )
+        self.assertEqual(payload["itinerary"]["distanceMeters"], 2500.0)
+        self.assertEqual(payload["itinerary"]["durationSeconds"], 900.0)
+        self.assertNotIn("rawResponse", payload["itinerary"])
+        self.assertNotIn("accessToken", payload["itinerary"])
+
+    @patch("chatbot.views.orchestrate_chat")
     def test_current_location_client_tool_call_has_explicit_shape(
         self,
         orchestrate_mock,
@@ -347,6 +426,15 @@ class ChatAPITests(SimpleTestCase):
             {},
             {"message": "   "},
             {"message": 123},
+            {
+                "message": "Sửa lịch trình",
+                "active_itinerary_id": "not-an-object-id",
+                "active_itinerary_version": 1,
+            },
+            {
+                "message": "Sửa lịch trình",
+                "active_itinerary_id": "507f1f77bcf86cd799439011",
+            },
             {
                 "message": "Tìm gần đây",
                 "current_location": {"longitude": 108.2},
@@ -470,6 +558,8 @@ class ChatAPITests(SimpleTestCase):
             "Huế có gì?",
             history=(),
             current_location=None,
+            active_itinerary_id=None,
+            active_itinerary_version=None,
         )
 
     @patch("chatbot.views.orchestrate_chat")
@@ -494,6 +584,8 @@ class ChatAPITests(SimpleTestCase):
                     "latitude": 16.061,
                     "radius_km": 1,
                 },
+                "active_itinerary_id": "507f1f77bcf86cd799439011",
+                "active_itinerary_version": 3,
             },
             content_type="application/json",
         )
@@ -506,6 +598,11 @@ class ChatAPITests(SimpleTestCase):
             call.kwargs["current_location"].longitude,
             108.227,
         )
+        self.assertEqual(
+            call.kwargs["active_itinerary_id"],
+            "507f1f77bcf86cd799439011",
+        )
+        self.assertEqual(call.kwargs["active_itinerary_version"], 3)
 
 
 class AskTravelCommandTests(SimpleTestCase):

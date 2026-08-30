@@ -29,7 +29,7 @@ INTENT_CASES: tuple[tuple[str, TravelIntent], ...] = (
     ("Từ Mỹ Khê đến Hội An mất bao lâu?", I.TRANSPORTATION_QA),
     ("Các điểm này có gần nhau không?", I.TRANSPORTATION_QA),
     ("Đi Grab hay thuê xe máy sẽ hợp lý hơn?", I.TRANSPORTATION_QA),
-    ("Lập lịch trình Đà Nẵng 3 ngày 2 đêm cho tôi.", I.ITINERARY_ADVICE),
+    ("Lập lịch trình Đà Nẵng 3 ngày 2 đêm cho tôi.", I.ITINERARY_MAKING),
     ("Tôi đến sân bay lúc 9 giờ sáng thứ Sáu và về lúc 8 giờ tối Chủ nhật.", I.ITINERARY_ADVICE),
     ("Đừng xếp lịch quá dày.", I.ITINERARY_ADVICE),
     ("Mỗi ngày tôi chỉ muốn đi khoảng 3–4 địa điểm.", I.ITINERARY_ADVICE),
@@ -118,8 +118,8 @@ INTENT_CASES: tuple[tuple[str, TravelIntent], ...] = (
 
 
 class TravelIntentTests(SimpleTestCase):
-    def test_catalog_contains_the_ten_question_answering_intents(self):
-        self.assertEqual(len(TravelIntent), 10)
+    def test_catalog_contains_the_eleven_question_answering_intents(self):
+        self.assertEqual(len(TravelIntent), 12)
         self.assertEqual(set(INTENT_DESCRIPTIONS), set(TravelIntent))
         self.assertTrue(all(description.strip() for description in INTENT_DESCRIPTIONS.values()))
 

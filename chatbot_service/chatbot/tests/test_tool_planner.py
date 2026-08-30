@@ -18,6 +18,43 @@ from chatbot.tool_planner import plan_tools
 
 
 class ToolPlannerTests(SimpleTestCase):
+    def test_itinerary_making_reuses_existing_discovery_without_route_tool(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.ITINERARY_MAKING,
+            actions=[
+                SemanticActionType.DISCOVER_PLACES,
+                SemanticActionType.MAKE_ITINERARY,
+            ],
+            domains=[TravelDomain.ATTRACTION],
+            entities=SemanticEntities(
+                destinations=["Hà Nội"],
+                place_types=["địa điểm vui chơi"],
+            ),
+        )
+
+        calls = plan_tools(interpretation, max_categories=1)
+
+        self.assertEqual(
+            [call.name for call in calls],
+            [
+                "mapbox_forward_search",
+                "search_travel_knowledge",
+                "mapbox_category_search",
+            ],
+        )
+        self.assertEqual(calls[0].arguments["types"], "city,place")
+        self.assertNotIn("mapbox_optimize_route", [call.name for call in calls])
+
+    def test_incomplete_itinerary_making_uses_no_tools(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.ITINERARY_MAKING,
+            actions=[SemanticActionType.REQUEST_CLARIFICATION],
+            status=InterpretationStatus.NEEDS_CLARIFICATION,
+            missing_information=["destination"],
+        )
+
+        self.assertEqual(plan_tools(interpretation), ())
+
     def test_travel_qa_uses_only_knowledge_base(self):
         interpretation = build_interpretation(
             intent=TravelIntent.TRAVEL_QA,

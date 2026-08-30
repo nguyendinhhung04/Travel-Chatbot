@@ -352,7 +352,12 @@ python manage.py test
 cd ..\frontend
 npm run lint
 npm run build
+npm run test:e2e
 ```
+
+`npm run test:e2e` tự khởi động một Next.js server riêng tại cổng `3100` và chạy
+Playwright bằng Microsoft Edge Stable. Bộ E2E mock response Gemini/Mapbox để kiểm
+tra ổn định luồng frontend; máy chạy test cần cài Microsoft Edge.
 
 Các test cục bộ kiểm tra logic và contract của ứng dụng nhưng không thay thế kiểm
 thử trực tiếp Gemini, Mapbox và kết nối mạng đến các nhà cung cấp.

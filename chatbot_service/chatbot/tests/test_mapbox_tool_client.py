@@ -12,16 +12,178 @@ from chatbot.tools.mapbox_client import (
     MapboxToolClient,
 )
 from chatbot.tools.models import (
+    ItineraryAddStopInput,
+    ItineraryCreateInput,
+    ItineraryGetInput,
+    ItineraryStopInput,
     MapboxCategorySearchInput,
     MapboxCandidateInput,
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
+    MapboxOptimizationStopInput,
+    MapboxOptimizeRouteInput,
     MapboxPlacesDetailsInput,
     MapboxReverseLookupInput,
 )
 
 
+def persisted_itinerary_payload(*, version: int):
+    return {
+        "id": "507f1f77bcf86cd799439011",
+        "userId": "admin",
+        "version": version,
+        "title": "Hà Nội",
+        "destination": "Hà Nội",
+        "durationDays": 2,
+        "durationNights": 1,
+        "profile": "driving",
+        "stops": [
+            {"id": "507f1f77bcf86cd799439012", "order": 1, "inputIndex": 0, "mapboxId": "poi-a", "name": "A", "longitude": 105.8, "latitude": 21.0},
+            {"id": "507f1f77bcf86cd799439013", "order": 2, "inputIndex": 1, "mapboxId": "poi-b", "name": "B", "longitude": 105.9, "latitude": 21.1},
+        ],
+        "route": {"type": "LineString", "coordinates": [[105.8, 21.0], [105.9, 21.1]]},
+        "distanceMeters": 2000,
+        "durationSeconds": 600,
+        "provider": "mapbox",
+        "generatedAt": "2026-08-28T10:00:00Z",
+        "createdAt": "2026-08-28T09:00:00Z",
+        "updatedAt": "2026-08-28T10:00:00Z",
+    }
+
+
 class MapboxToolClientTests(SimpleTestCase):
+    def test_itinerary_create_posts_persistence_contract(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = (request.method, request.url.path, json.loads(request.content))
+            return httpx.Response(201, json=persisted_itinerary_payload(version=1))
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            client = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            )
+            result = client.create_itinerary(ItineraryCreateInput(
+                title="HĂ  Ná»™i",
+                destination="HĂ  Ná»™i",
+                durationDays=2,
+                durationNights=1,
+                profile="driving",
+                stops=[
+                    ItineraryStopInput(
+                        mapboxId="poi-a",
+                        name="A",
+                        longitude=105.8,
+                        latitude=21.0,
+                    ),
+                    ItineraryStopInput(
+                        mapboxId="poi-b",
+                        name="B",
+                        longitude=105.9,
+                        latitude=21.1,
+                    ),
+                ],
+            ))
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data.version, 1)
+        self.assertEqual(
+            captured[:2],
+            ("POST", "/api/users/admin/itineraries"),
+        )
+        self.assertEqual(captured[2]["durationDays"], 2)
+        self.assertEqual(captured[2]["stops"][0]["mapboxId"], "poi-a")
+
+    def test_itinerary_add_stop_forwards_version_and_parses_persisted_contract(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = (request.method, request.url.path, json.loads(request.content))
+            return httpx.Response(200, json=persisted_itinerary_payload(version=4))
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            client = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            )
+            result = client.add_itinerary_stop(ItineraryAddStopInput(
+                itineraryId="507f1f77bcf86cd799439011",
+                expectedVersion=3,
+                stop=ItineraryStopInput(
+                    mapboxId="poi-yen-so",
+                    name="Công viên Yên Sở",
+                    longitude=105.88,
+                    latitude=20.96,
+                ),
+            ))
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data.version, 4)
+        self.assertEqual(
+            captured[:2],
+            ("POST", "/api/users/admin/itineraries/507f1f77bcf86cd799439011/stops"),
+        )
+        self.assertEqual(captured[2]["expectedVersion"], 3)
+
+    def test_get_itinerary_preserves_backend_conflict_error(self):
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                409,
+                json={"errorCode": "version_conflict", "error": "stale"},
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            result = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            ).get_itinerary(ItineraryGetInput(
+                itineraryId="507f1f77bcf86cd799439011"
+            ))
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_code, "version_conflict")
+
+    def test_optimize_route_posts_alias_contract_and_parses_geometry(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = (request.url.path, json.loads(request.content))
+            return httpx.Response(200, json={
+                "success": True,
+                "data": {
+                    "profile": "driving",
+                    "orderedStops": [
+                        {"order": 1, "inputIndex": 1, "mapboxId": "poi-2", "name": "B", "longitude": 105.9, "latitude": 21.1},
+                        {"order": 2, "inputIndex": 0, "mapboxId": "poi-1", "name": "A", "longitude": 105.8, "latitude": 21.0},
+                    ],
+                    "geometry": {"type": "LineString", "coordinates": [[105.9, 21.1], [105.8, 21.0]]},
+                    "distanceMeters": 1234.5,
+                    "durationSeconds": 456.7,
+                },
+            })
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            result = MapboxToolClient(
+                base_url="http://tools.test",
+                http_client=http_client,
+            ).optimize_route(MapboxOptimizeRouteInput(
+                profile="driving",
+                stops=[
+                    MapboxOptimizationStopInput(mapboxId="poi-1", name="A", longitude=105.8, latitude=21.0),
+                    MapboxOptimizationStopInput(mapboxId="poi-2", name="B", longitude=105.9, latitude=21.1),
+                ],
+            ))
+
+        self.assertTrue(result.success)
+        self.assertEqual(captured[0], "/api/chatbot/tools/mapbox-optimize-route")
+        self.assertEqual(captured[1]["stops"][0]["mapboxId"], "poi-1")
+        self.assertEqual(result.data.ordered_stops[0].input_index, 1)
+        self.assertEqual(result.data.geometry.type, "LineString")
+
     def test_retrieve_place_details_posts_one_batch(self):
         captured = None
 

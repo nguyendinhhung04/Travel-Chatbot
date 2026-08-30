@@ -804,6 +804,15 @@ textarea:disabled {
   letter-spacing: -0.03em;
 }
 
+.map-itinerary-summary {
+  max-width: 260px;
+  margin: 7px 0 0;
+  color: #236b68;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
 .map-status {
   display: inline-flex;
   align-items: center;
@@ -872,6 +881,26 @@ textarea:disabled {
   background: #fff;
   border-radius: 50%;
   content: "";
+}
+
+.map-itinerary-marker {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  background: #236b68;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 3px 10px rgba(31, 67, 76, 0.4);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.map-itinerary-marker-active {
+  background: #d35c45;
+  transform: scale(1.14);
 }
 
 .map-user-marker {

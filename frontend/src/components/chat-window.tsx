@@ -8,6 +8,7 @@ import QuickRecommendations from "@/components/quick-recommendations";
 import { getMockRecommendations } from "@/data/mock-recommendations";
 import type {
   ChatErrorResponse,
+  ChatItinerary,
   ChatMessage as ChatMessageType,
   ChatPlace,
   PlaceRecommendation,
@@ -18,7 +19,10 @@ import type {
 } from "@/types/chat";
 
 type ChatWindowProps = {
+  activeItineraryId: string | null;
+  activeItineraryVersion: number | null;
   onPlacesReceived: (places: ChatPlace[]) => void;
+  onItineraryReceived: (itinerary: ChatItinerary | null) => void;
   onCurrentLocationReceived: (location: UserLocation) => void;
   onPlaceHover: (place: ChatPlace) => void;
   onPlaceClick: (place: ChatPlace) => void;
@@ -81,7 +85,8 @@ function isSuccessResponse(value: unknown): value is ChatSuccessResponse {
     typeof (value as ChatSuccessResponse).answer === "string" &&
     Array.isArray((value as ChatSuccessResponse).sources) &&
     (value as ChatSuccessResponse).sources.every(isSource) &&
-    (!("places" in value) || isPlaceList((value as ChatSuccessResponse).places))
+    (!("places" in value) || isPlaceList((value as ChatSuccessResponse).places)) &&
+    (!("itinerary" in value) || isItinerary((value as ChatSuccessResponse).itinerary))
   );
 }
 
@@ -111,6 +116,114 @@ function isPlaceList(value: unknown): value is ChatPlace[] {
   return Array.isArray(value) && value.every(isPlace);
 }
 
+function isItineraryStop(value: unknown): value is ChatItinerary["stops"][number] {
+  if (typeof value !== "object" || value === null) return false;
+  const stop = value as Partial<ChatItinerary["stops"][number]>;
+  const { longitude, latitude, order, inputIndex } = stop;
+  return (
+    typeof stop.mapboxId === "string" &&
+    stop.mapboxId.trim().length > 0 &&
+    typeof stop.name === "string" &&
+    stop.name.trim().length > 0 &&
+    typeof longitude === "number" &&
+    Number.isFinite(longitude) &&
+    typeof latitude === "number" &&
+    Number.isFinite(latitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    typeof order === "number" &&
+    Number.isInteger(order) &&
+    typeof inputIndex === "number" &&
+    Number.isInteger(inputIndex) &&
+    order >= 1 &&
+    inputIndex >= 0 &&
+    (stop.reason === undefined || stop.reason === null || typeof stop.reason === "string")
+  );
+}
+
+function isItinerary(value: unknown): value is ChatItinerary {
+  if (typeof value !== "object" || value === null) return false;
+  const itinerary = value as Partial<ChatItinerary>;
+  const {
+    durationDays,
+    durationNights,
+    distanceMeters,
+    durationSeconds,
+  } = itinerary;
+  if (
+    typeof itinerary.id !== "string" ||
+    !/^[a-f\d]{24}$/i.test(itinerary.id) ||
+    typeof itinerary.version !== "number" ||
+    !Number.isInteger(itinerary.version) ||
+    itinerary.version < 1 ||
+    typeof itinerary.title !== "string" ||
+    itinerary.title.trim().length === 0 ||
+    typeof itinerary.destination !== "string" ||
+    itinerary.destination.trim().length === 0 ||
+    typeof durationDays !== "number" ||
+    !Number.isInteger(durationDays) ||
+    typeof durationNights !== "number" ||
+    !Number.isInteger(durationNights) ||
+    durationDays < 1 ||
+    durationNights < 0 ||
+    (itinerary.profile !== "driving" &&
+      itinerary.profile !== "walking" &&
+      itinerary.profile !== "cycling") ||
+    typeof distanceMeters !== "number" ||
+    !Number.isFinite(distanceMeters) ||
+    typeof durationSeconds !== "number" ||
+    !Number.isFinite(durationSeconds) ||
+    distanceMeters < 0 ||
+    durationSeconds < 0 ||
+    !Array.isArray(itinerary.stops) ||
+    itinerary.stops.length < 2 ||
+    itinerary.stops.length > 12 ||
+    !itinerary.stops.every(isItineraryStop) ||
+    !itinerary.route ||
+    itinerary.route.type !== "LineString" ||
+    !Array.isArray(itinerary.route.coordinates) ||
+    itinerary.route.coordinates.length < 2
+  ) {
+    return false;
+  }
+
+  const stops = itinerary.stops;
+  const mapboxIds = new Set<string>();
+  const inputIndexes = new Set<number>();
+  for (let index = 0; index < stops.length; index += 1) {
+    const stop = stops[index];
+    if (
+      stop.order !== index + 1 ||
+      mapboxIds.has(stop.mapboxId) ||
+      inputIndexes.has(stop.inputIndex)
+    ) {
+      return false;
+    }
+    mapboxIds.add(stop.mapboxId);
+    inputIndexes.add(stop.inputIndex);
+  }
+  if (
+    [...inputIndexes].sort((left, right) => left - right).join(",") !==
+    stops.map((_stop, index) => index).join(",")
+  ) {
+    return false;
+  }
+
+  return itinerary.route.coordinates.every(
+    (coordinate) =>
+      Array.isArray(coordinate) &&
+      coordinate.length === 2 &&
+      Number.isFinite(coordinate[0]) &&
+      Number.isFinite(coordinate[1]) &&
+      coordinate[0] >= -180 &&
+      coordinate[0] <= 180 &&
+      coordinate[1] >= -90 &&
+      coordinate[1] <= 90,
+  );
+}
+
 function isRecommendation(value: unknown): value is PlaceRecommendation {
   if (!isPlace(value)) return false;
   const recommendation = value as PlaceRecommendation;
@@ -137,7 +250,10 @@ function getErrorMessage(value: unknown) {
 }
 
 export default function ChatWindow({
+  activeItineraryId,
+  activeItineraryVersion,
   onPlacesReceived,
+  onItineraryReceived,
   onCurrentLocationReceived,
   onPlaceHover,
   onPlaceClick,
@@ -255,6 +371,12 @@ export default function ChatWindow({
       body: JSON.stringify({
         message: question,
         history,
+        ...(activeItineraryId === null
+          ? {}
+          : { active_itinerary_id: activeItineraryId }),
+        ...(activeItineraryVersion === null
+          ? {}
+          : { active_itinerary_version: activeItineraryVersion }),
         ...(currentLocation === undefined
           ? {}
           : { current_location: currentLocation }),
@@ -281,7 +403,13 @@ export default function ChatWindow({
     };
 
     setMessages((current) => trimMessages([...current, assistantMessage]));
-    onPlacesReceived(places);
+    const itineraryPlaceIds = new Set(
+      payload.itinerary?.stops.map((stop) => stop.mapboxId) ?? [],
+    );
+    onPlacesReceived(
+      places.filter((place) => !itineraryPlaceIds.has(place.mapboxId)),
+    );
+    if (payload.itinerary) onItineraryReceived(payload.itinerary);
     setInput("");
   }
 

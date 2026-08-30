@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.exceptions import OutputParserException
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -69,6 +70,12 @@ class SemanticActionType(str, Enum):
     FIND_NAMED_PLACE = "find_named_place"
     DISCOVER_PLACES = "discover_places"
     REVERSE_GEOCODE = "reverse_geocode"
+    MAKE_ITINERARY = "make_itinerary"
+    SHOW_ITINERARY = "show_itinerary"
+    ADD_ITINERARY_STOP = "add_itinerary_stop"
+    REMOVE_ITINERARY_STOP = "remove_itinerary_stop"
+    UPDATE_ITINERARY = "update_itinerary"
+    REORDER_ITINERARY_STOPS = "reorder_itinerary_stops"
     PROVIDE_ITINERARY_ADVICE = "provide_itinerary_advice"
     PROVIDE_TRANSPORTATION_ADVICE = "provide_transportation_advice"
     PROVIDE_BUDGET_ADVICE = "provide_budget_advice"
@@ -140,6 +147,13 @@ class SemanticConstraints(SemanticModel):
     experience_tags: list[NonEmptyString] = Field(default_factory=list, max_length=15)
 
 
+class SemanticItineraryContext(SemanticModel):
+    stop_indexes: list[int] = Field(default_factory=list, max_length=10)
+    target_stop_name: NonEmptyString | None = None
+    route_profile: Literal["driving", "walking", "cycling"] | None = None
+    add_position: Literal["first", "last", "optimized"] | None = None
+
+
 class SemanticAction(SemanticModel):
     type: SemanticActionType
     depends_on: list[int] = Field(default_factory=list, max_length=4)
@@ -153,6 +167,9 @@ class SemanticInterpretation(SemanticModel):
     location: SemanticLocation = Field(default_factory=SemanticLocation)
     time_context: SemanticTimeContext = Field(default_factory=SemanticTimeContext)
     constraints: SemanticConstraints = Field(default_factory=SemanticConstraints)
+    itinerary_context: SemanticItineraryContext = Field(
+        default_factory=SemanticItineraryContext
+    )
     actions: list[SemanticAction] = Field(min_length=1, max_length=4)
     missing_information: list[NonEmptyString] = Field(default_factory=list, max_length=10)
     status: InterpretationStatus
@@ -160,6 +177,51 @@ class SemanticInterpretation(SemanticModel):
     @model_validator(mode="after")
     def validate_status_actions(self) -> SemanticInterpretation:
         action_types = {action.type for action in self.actions}
+        is_itinerary_making = self.primary_intent == TravelIntent.ITINERARY_MAKING
+        has_make_itinerary = SemanticActionType.MAKE_ITINERARY in action_types
+        management_actions = {
+            SemanticActionType.SHOW_ITINERARY,
+            SemanticActionType.ADD_ITINERARY_STOP,
+            SemanticActionType.REMOVE_ITINERARY_STOP,
+            SemanticActionType.UPDATE_ITINERARY,
+            SemanticActionType.REORDER_ITINERARY_STOPS,
+        }
+        has_management_action = bool(action_types.intersection(management_actions))
+        is_itinerary_management = (
+            self.primary_intent == TravelIntent.ITINERARY_MANAGEMENT
+        )
+        if has_make_itinerary and not is_itinerary_making:
+            raise ValueError(
+                "make_itinerary is only valid for the itinerary_making intent"
+            )
+        if (
+            is_itinerary_making
+            and self.status
+            in {
+                InterpretationStatus.SUPPORTED,
+                InterpretationStatus.PARTIALLY_SUPPORTED,
+            }
+            and not has_make_itinerary
+        ):
+            raise ValueError(
+                "supported itinerary_making requires a make_itinerary action"
+            )
+        if has_management_action and not is_itinerary_management:
+            raise ValueError(
+                "itinerary management actions require the itinerary_management intent"
+            )
+        if (
+            is_itinerary_management
+            and self.status
+            in {
+                InterpretationStatus.SUPPORTED,
+                InterpretationStatus.PARTIALLY_SUPPORTED,
+            }
+            and not has_management_action
+        ):
+            raise ValueError(
+                "supported itinerary_management requires a management action"
+            )
         if self.status == InterpretationStatus.NEEDS_CLARIFICATION:
             if not self.missing_information:
                 raise ValueError(
@@ -198,6 +260,27 @@ Chọn đúng một primary_intent:
 
 Quy tắc:
 - Có thể tạo nhiều action nhưng không tạo tên tool, canonicalId, route hoặc dữ liệu giả.
+- Dùng itinerary_making khi người dùng yêu cầu tạo/lập/xây dựng một lịch trình cụ thể có
+  điểm đến hoặc thời lượng, ví dụ "Lập lịch trình Hà Nội 3 ngày 2 đêm". Khi đủ thông tin,
+  luôn thêm make_itinerary; thêm discover_places khi cần khám phá các địa điểm cho lịch trình.
+- Dùng itinerary_advice cho câu hỏi tư vấn nguyên tắc, đánh giá hoặc góp ý lịch trình dạng
+  văn bản mà không yêu cầu tạo một lịch trình mới có route.
+- Dùng itinerary_management khi người dùng muốn xem hoặc thay đổi một lịch trình đang tồn tại.
+  Intent nghiệp vụ này ưu tiên hơn context_follow_up dù câu hỏi phụ thuộc vào history.
+  + "Thêm Công viên Yên Sở vào lịch trình": itinerary_management,
+    actions=[find_named_place, add_itinerary_stop], entities.places=["Công viên Yên Sở"].
+  + "Xóa điểm thứ 2": itinerary_management, action=remove_itinerary_stop,
+    itinerary_context.stop_indexes=[2].
+  + "Đổi điểm thứ 2 thành Văn Miếu": itinerary_management,
+    actions=[find_named_place, update_itinerary], itinerary_context.stop_indexes=[2].
+  + "Cho điểm thứ 3 lên đầu": itinerary_management, action=reorder_itinerary_stops.
+  + "Cho tôi xem lịch trình hiện tại": itinerary_management, action=show_itinerary.
+- Không dùng make_itinerary cho thao tác thêm/xóa/sửa lịch trình đang tồn tại.
+- Chỉ dùng context_follow_up khi không xác định được intent nghiệp vụ cụ thể hơn.
+- "Tìm địa điểm", tìm theo category, travel_qa và "các địa điểm chơi tại Hà Nội" không
+  phải itinerary_making và không được thêm make_itinerary.
+- Nếu yêu cầu itinerary_making thiếu điểm đến và history không giải quyết được, dùng
+  needs_clarification với request_clarification; không tự đoán điểm đến.
 - Tên/POI cụ thể dùng find_named_place; nhu cầu khám phá mở dùng discover_places.
   Với place_details như "Đà Lạt ở đâu" hoặc "Hà Nội nằm ở đâu", luôn thêm
   find_named_place khi entities.destinations có tên địa danh và đặt search_target
@@ -220,8 +303,9 @@ Quy tắc:
   Không chọn loại địa điểm từ từ khóa phụ như mùa hoặc cảm xúc.
 - Chỉ đặt minimum_rating/rank_strategy khi người dùng nói rõ; gần nhất dùng distance,
   ưu tiên phù hợp dùng relevance, không giới hạn rating dùng 0.
-- Chỉ đường, giao thông thời gian thực, thời tiết hiện tại và thao tác lưu là
-  unsupported/report_unsupported. Lịch trình chỉ là tư vấn văn bản.
+- Chỉ đường trực tiếp, giao thông thời gian thực, thời tiết hiện tại và thao tác lưu là
+  unsupported/report_unsupported. Chỉ itinerary_making mô tả yêu cầu tạo lịch trình có route;
+  semantic không tự tạo geometry hoặc thứ tự tối ưu.
 - Các câu như "gần tôi", "quanh đây", "ở đâu" đặt location.use_current_location=true.
   Nếu current_location là null thì dùng needs_clarification và nêu
   missing_information là "current_location"; giữ action nghiệp vụ người dùng yêu cầu
@@ -247,6 +331,7 @@ class SemanticInterpreter:
         *,
         history: Sequence[ConversationMessage] = (),
         current_location: SemanticLocation | None = None,
+        active_itinerary_id: str | None = None,
     ) -> SemanticInterpretation:
         cleaned_question = question.strip()
         if not cleaned_question:
@@ -264,6 +349,7 @@ class SemanticInterpreter:
                 if current_location
                 else None
             ),
+            "active_itinerary_id": active_itinerary_id,
         }
         messages = [
             SystemMessage(content=SEMANTIC_SYSTEM_PROMPT),
@@ -275,7 +361,21 @@ class SemanticInterpreter:
                 )
             ),
         ]
-        result = self._structured_model.invoke(messages)
+        try:
+            result = self._structured_model.invoke(messages)
+        except OutputParserException:
+            correction_messages = [
+                *messages,
+                HumanMessage(
+                    content=(
+                        "Kết quả trước vi phạm quan hệ giữa primary_intent và actions. "
+                        "Hãy phân tích lại từ đầu; thao tác thêm/xóa/sửa/xem lịch trình "
+                        "đang tồn tại phải dùng itinerary_management, không dùng "
+                        "context_follow_up hoặc make_itinerary."
+                    )
+                ),
+            ]
+            result = self._structured_model.invoke(correction_messages)
         interpretation = (
             result
             if isinstance(result, SemanticInterpretation)
@@ -350,6 +450,7 @@ def interpret_question(
     *,
     history: Sequence[ConversationMessage] = (),
     current_location: SemanticLocation | None = None,
+    active_itinerary_id: str | None = None,
     chat_model: Any | None = None,
 ) -> SemanticInterpretation:
     """Interpret one question without changing the current chat orchestration."""
@@ -358,6 +459,7 @@ def interpret_question(
         question,
         history=history,
         current_location=current_location,
+        active_itinerary_id=active_itinerary_id,
     )
 
 
@@ -371,6 +473,7 @@ __all__ = [
     "SemanticConstraints",
     "SemanticEntities",
     "SemanticInterpretation",
+    "SemanticItineraryContext",
     "SemanticInterpreter",
     "SemanticLocation",
     "SemanticTimeContext",
