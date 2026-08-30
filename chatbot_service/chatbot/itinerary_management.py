@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,8 +35,14 @@ class ItineraryManagementResult:
 class ItineraryManagementPipeline:
     """Execute the supported ADD_STOP vertical slice."""
 
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        *,
+        max_tool_calls: int | None = None,
+    ) -> None:
         self._registry = registry
+        self._max_tool_calls = max_tool_calls
 
     def execute(
         self,
@@ -155,6 +162,23 @@ class ItineraryManagementPipeline:
         )
 
     def _run(self, call, calls, executions) -> ToolExecution:
+        if (
+            self._max_tool_calls is not None
+            and len(calls) >= self._max_tool_calls
+        ):
+            return ToolExecution(
+                content=json.dumps(
+                    {
+                        "success": False,
+                        "errorCode": "tool_budget_exceeded",
+                    },
+                    ensure_ascii=False,
+                ),
+                sources=(),
+                success=False,
+                system_failure=False,
+                error_code="tool_budget_exceeded",
+            )
         execution = self._registry.execute(call.name, call.arguments)
         calls.append(call)
         executions.append(execution)

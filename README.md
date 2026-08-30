@@ -98,8 +98,9 @@ Chạy lại `python manage.py ingest_knowledge` khi thêm, sửa hoặc xóa t�
 
 ### 2. Sơ đồ định tuyến tổng quát theo intent
 
-Mỗi request chỉ có một `primary_intent`. Một intent có thể sinh nhiều action;
-`plan_tools()` dựa trên cả intent và action để chọn công cụ thực thi.
+Mỗi request chỉ có một `primary_intent`. `SemanticInterpreter` chỉ phân loại và
+trích xuất semantic data; `IntentRouter` dispatch tới đúng một handler. Handler
+tự lập plan, chạy tool/pipeline và gắn evidence policy.
 
 ```mermaid
 flowchart TD
@@ -113,41 +114,23 @@ flowchart TD
     BROWSER --> RETRY[Gửi lại cùng câu hỏi kèm tọa độ]
     RETRY --> SEMANTIC
 
-    GPS -->|Không| STATUS{Status cần làm rõ<br/>hoặc unsupported?}
-    STATUS -->|Có| NO_TOOL[Không lập tool plan]
-    STATUS -->|Không| INTENT{primary_intent}
-
-    INTENT --> DD[destination_discovery]
-    INTENT --> PS[place_search]
-    INTENT --> PD[place_details]
-    INTENT --> TQ[travel_qa]
-    INTENT --> IA[itinerary_advice]
-    INTENT --> TR[transportation_qa]
-    INTENT --> BQ[budget_qa]
-    INTENT --> CF[context_follow_up]
-    INTENT --> GC[general_chat]
-    INTENT --> UC[unsupported_capability]
-
-    DD --> DISCOVERY[Destination Discovery Pipeline]
-    PS --> MAPBOX[Mapbox-first tool plan]
-    PD --> DETAILS[RAG và Mapbox-first tool plan]
-    TQ --> ADVICE[RAG-first tool plan]
-    IA --> ADVICE
-    TR --> ADVICE
-    BQ --> ADVICE
-    CF --> HISTORY[Chọn tool theo history và action]
-    GC --> NO_TOOL
-    UC --> NO_TOOL
-
-    DISCOVERY --> SYNTHESIS[Gemini tổng hợp câu trả lời]
-    MAPBOX --> SYNTHESIS
-    DETAILS --> SYNTHESIS
-    ADVICE --> SYNTHESIS
-    HISTORY --> SYNTHESIS
-    NO_TOOL --> SYNTHESIS
-    SYNTHESIS --> RESPONSE[answer, sources, places]
+    GPS -->|Không| ROUTER[IntentRouter dispatch]
+    ROUTER --> HANDLER[Một concrete IntentHandler]
+    HANDLER --> EXEC[ToolRegistry hoặc domain pipeline]
+    EXEC --> COMPOSER[AnswerComposer]
+    ROUTER -->|needs_clarification/unsupported| COMPOSER
+    COMPOSER --> PROJECTOR[ResponseProjector]
+    PROJECTOR --> RESPONSE[answer, sources, places, itinerary]
     RESPONSE --> UI[Frontend hiển thị chat và bản đồ]
 ```
+
+12 handler được đăng ký tại `chatbot/intent_routing/factory.py`; registry kiểm tra
+đủ và không trùng `TravelIntent` ngay khi khởi tạo. `ToolRegistry` vẫn là boundary
+allowlist và typed validation duy nhất cho tool backend.
+
+`chatbot.tool_planner.plan_tools()` và `response_policy_for()` chỉ còn là compatibility
+facade cho test hoặc integration cũ; runtime request không đi qua hai API này. Có thể
+xóa chúng sau khi toàn bộ consumer bên ngoài chuyển sang handler và policy tương ứng.
 
 ### 3. Intent `destination_discovery`
 
@@ -236,7 +219,7 @@ flowchart TD
 
     I -->|general_chat| DIRECT
     I -->|unsupported_capability| LIMIT[Thông báo giới hạn tính năng]
-    I -->|needs_clarification| CLARIFY[Yêu cầu người dùng bổ sung thông tin]
+    I -->|semantic status needs_clarification| CLARIFY[Yêu cầu người dùng bổ sung thông tin]
 
     TOOLS --> ANSWER[Gemini tạo câu trả lời]
     DIRECT --> ANSWER

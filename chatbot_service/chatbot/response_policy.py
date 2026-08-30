@@ -70,7 +70,7 @@ _RAG_FIRST_ADVICE_INTENTS = frozenset(
 
 
 def response_policy_for(intent: TravelIntent) -> str | None:
-    """Return exactly one evidence policy for the primary intent, if needed."""
+    """Deprecated compatibility lookup; handlers now own response policies."""
     if intent == TravelIntent.DESTINATION_DISCOVERY:
         return DESTINATION_DISCOVERY_POLICY
     if intent == TravelIntent.ITINERARY_MAKING:

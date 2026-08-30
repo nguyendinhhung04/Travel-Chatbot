@@ -1,24 +1,21 @@
-"""Deterministically map semantic actions to the chatbot tool allowlist."""
+"""Compatibility contracts for planned tool calls.
+
+Runtime planning lives in ``chatbot.intent_routing.planning`` and is owned by
+the concrete intent handlers. ``plan_tools`` remains as a small compatibility
+facade for existing callers while they migrate to the router.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from chatbot.category_resolver import resolve_mapbox_categories
 from chatbot.intent import TravelIntent
 from chatbot.semantic import (
     InterpretationStatus,
-    SearchTargetType,
     SemanticActionType,
     SemanticInterpretation,
 )
-from chatbot.tools.registry import (
-    MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
-    MAPBOX_FORWARD_SEARCH_TOOL_NAME,
-    MAPBOX_REVERSE_LOOKUP_TOOL_NAME,
-)
-from chatbot.tools.rag_tool import SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME
 
 
 DEFAULT_MAPBOX_RESULT_LIMIT = 5
@@ -27,27 +24,6 @@ DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT = 10
 DEFAULT_MAPBOX_MINIMUM_RATING = 0.0
 DEFAULT_MAPBOX_RANK_STRATEGY = "relevance"
 DEFAULT_MAX_CATEGORIES = 3
-_KILOMETERS_PER_DEGREE = 111.32
-
-_RAG_INTENTS = frozenset(
-    {
-        TravelIntent.DESTINATION_DISCOVERY,
-        TravelIntent.PLACE_DETAILS,
-        TravelIntent.TRAVEL_QA,
-        TravelIntent.ITINERARY_MAKING,
-        TravelIntent.ITINERARY_ADVICE,
-        TravelIntent.TRANSPORTATION_QA,
-        TravelIntent.BUDGET_QA,
-    }
-)
-_RAG_ACTIONS = frozenset(
-    {
-        SemanticActionType.ANSWER_TRAVEL_QUESTION,
-        SemanticActionType.PROVIDE_ITINERARY_ADVICE,
-        SemanticActionType.PROVIDE_TRANSPORTATION_ADVICE,
-        SemanticActionType.PROVIDE_BUDGET_ADVICE,
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -65,7 +41,23 @@ def plan_tools(
     *,
     max_categories: int = DEFAULT_MAX_CATEGORIES,
 ) -> tuple[PlannedToolCall, ...]:
-    """Create an ordered read-only tool plan for one interpreted question."""
+    """Deprecated compatibility planner for callers outside the application flow.
+
+    Runtime requests are planned by the concrete handler selected by
+    ``IntentRouter``. This function remains temporarily to preserve the public
+    helper used by existing tests and integrations.
+    """
+    from chatbot.intent_routing.planning import (
+        deduplicate_calls,
+        forward_search_target,
+        needs_destination_lookup,
+        plan_category_search,
+        plan_destination_lookup,
+        plan_named_place_search,
+        plan_rag_search,
+        plan_reverse_lookup,
+    )
+
     if interpretation.status in {
         InterpretationStatus.NEEDS_CLARIFICATION,
         InterpretationStatus.UNSUPPORTED,
@@ -83,31 +75,43 @@ def plan_tools(
             SemanticActionType.DISCOVER_PLACES in action_types
             or interpretation.primary_intent == TravelIntent.ITINERARY_MAKING
         )
-        and _needs_destination_lookup(interpretation)
+        and needs_destination_lookup(interpretation)
         and interpretation.primary_intent != TravelIntent.DESTINATION_DISCOVERY
     ):
-        destination_call = _plan_destination_forward_call(interpretation)
+        destination_types = (
+            "city,place"
+            if interpretation.primary_intent
+            in {TravelIntent.DESTINATION_DISCOVERY, TravelIntent.ITINERARY_MAKING}
+            else "poi,address,city,place"
+        )
+        destination_call = plan_destination_lookup(
+            interpretation,
+            types=destination_types,
+            limit=DESTINATION_FORWARD_RESULT_LIMIT,
+        )
         if destination_call is not None:
             calls.append(destination_call)
 
+    rag_intents = {
+        TravelIntent.DESTINATION_DISCOVERY,
+        TravelIntent.PLACE_DETAILS,
+        TravelIntent.TRAVEL_QA,
+        TravelIntent.ITINERARY_MAKING,
+        TravelIntent.ITINERARY_ADVICE,
+        TravelIntent.TRANSPORTATION_QA,
+        TravelIntent.BUDGET_QA,
+    }
+    rag_actions = {
+        SemanticActionType.ANSWER_TRAVEL_QUESTION,
+        SemanticActionType.PROVIDE_ITINERARY_ADVICE,
+        SemanticActionType.PROVIDE_TRANSPORTATION_ADVICE,
+        SemanticActionType.PROVIDE_BUDGET_ADVICE,
+    }
     if (
-        interpretation.primary_intent in _RAG_INTENTS
-        or action_types.intersection(_RAG_ACTIONS)
+        interpretation.primary_intent in rag_intents
+        or action_types.intersection(rag_actions)
     ):
-        rag_arguments: dict[str, Any] = {
-            "query": interpretation.normalized_query,
-        }
-        rag_destination = _primary_destination(interpretation)
-        if rag_destination is not None:
-            rag_arguments["destination"] = rag_destination
-        calls.append(
-            PlannedToolCall(
-                SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
-                rag_arguments,
-                destination=rag_destination,
-                evidence_kind="knowledge",
-            )
-        )
+        calls.append(plan_rag_search(interpretation))
 
     # A place-details question can arrive with only the generic answer action.
     # The named destination is still an explicit Mapbox lookup target, so do
@@ -115,257 +119,52 @@ def plan_tools(
     if (
         interpretation.primary_intent == TravelIntent.PLACE_DETAILS
         and SemanticActionType.FIND_NAMED_PLACE not in action_types
-        and _needs_destination_lookup(interpretation)
+        and needs_destination_lookup(interpretation)
     ):
-        destination_call = _plan_place_details_destination_call(interpretation)
+        target = forward_search_target(interpretation)
+        target_types = (
+            target.value
+            if target.value in {"country", "city", "address", "place"}
+            else "city,place"
+        )
+        destination_call = plan_destination_lookup(
+            interpretation,
+            types=target_types,
+            limit=DEFAULT_MAPBOX_RESULT_LIMIT,
+        )
         if destination_call is not None:
             calls.append(destination_call)
 
     if (
         interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
         and SemanticActionType.DISCOVER_PLACES in action_types
-        and _needs_destination_lookup(interpretation)
+        and needs_destination_lookup(interpretation)
     ):
-        destination_call = _plan_destination_forward_call(interpretation)
+        destination_call = plan_destination_lookup(
+            interpretation,
+            types="city,place",
+            limit=DESTINATION_FORWARD_RESULT_LIMIT,
+        )
         if destination_call is not None:
             calls.append(destination_call)
 
     if SemanticActionType.FIND_NAMED_PLACE in action_types:
-        calls.extend(_plan_named_place_calls(interpretation))
+        calls.extend(plan_named_place_search(interpretation))
 
     if SemanticActionType.DISCOVER_PLACES in action_types:
         calls.extend(
-            _plan_category_calls(
+            plan_category_search(
                 interpretation,
                 max_categories=max_categories,
             )
         )
 
     if SemanticActionType.REVERSE_GEOCODE in action_types:
-        reverse_call = _plan_reverse_call(interpretation)
+        reverse_call = plan_reverse_lookup(interpretation)
         if reverse_call is not None:
             calls.append(reverse_call)
 
-    return _deduplicate_calls(calls)
-
-
-def _primary_destination(
-    interpretation: SemanticInterpretation,
-) -> str | None:
-    if interpretation.location.near:
-        return interpretation.location.near
-    if interpretation.entities.destinations:
-        return interpretation.entities.destinations[0]
-    return None
-
-
-def _needs_destination_lookup(
-    interpretation: SemanticInterpretation,
-) -> bool:
-    return (
-        interpretation.location.longitude is None
-        and interpretation.location.latitude is None
-        and _primary_destination(interpretation) is not None
-    )
-
-
-def _plan_destination_forward_call(
-    interpretation: SemanticInterpretation,
-) -> PlannedToolCall | None:
-    destination = _primary_destination(interpretation)
-    if destination is None:
-        return None
-    destination_types = (
-        "city,place"
-        if interpretation.primary_intent
-        in {
-            TravelIntent.DESTINATION_DISCOVERY,
-            TravelIntent.ITINERARY_MAKING,
-        }
-        else "poi,address,city,place"
-    )
-    return PlannedToolCall(
-        MAPBOX_FORWARD_SEARCH_TOOL_NAME,
-        {
-            "q": destination,
-            "language": "vi",
-            "limit": DESTINATION_FORWARD_RESULT_LIMIT,
-            "types": destination_types,
-            "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
-            "auto_complete": False,
-        },
-        destination=destination,
-        evidence_kind="destination_location",
-    )
-
-
-def _plan_place_details_destination_call(
-    interpretation: SemanticInterpretation,
-) -> PlannedToolCall | None:
-    destination = _primary_destination(interpretation)
-    if destination is None:
-        return None
-
-    target = interpretation.entities.search_target
-    target_types = (
-        target.value
-        if target in {
-            SearchTargetType.COUNTRY,
-            SearchTargetType.CITY,
-            SearchTargetType.ADDRESS,
-            SearchTargetType.PLACE,
-        }
-        else "city,place"
-    )
-    return PlannedToolCall(
-        MAPBOX_FORWARD_SEARCH_TOOL_NAME,
-        {
-            "q": destination,
-            "language": "vi",
-            "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
-            "types": target_types,
-            "rank_strategy": DEFAULT_MAPBOX_RANK_STRATEGY,
-            "auto_complete": False,
-        },
-        destination=destination,
-        evidence_kind="destination_location",
-    )
-
-
-def _plan_named_place_calls(
-    interpretation: SemanticInterpretation,
-) -> list[PlannedToolCall]:
-    queries = interpretation.entities.places or interpretation.entities.destinations
-    if not queries:
-        return []
-
-    common_arguments = _mapbox_location_arguments(interpretation)
-    constraints = interpretation.constraints
-    search_target = _forward_search_target(interpretation)
-    common_arguments["types"] = search_target.value
-    common_arguments["rank_strategy"] = (
-        constraints.rank_strategy or DEFAULT_MAPBOX_RANK_STRATEGY
-    )
-    if search_target == SearchTargetType.POI:
-        if constraints.open_now is not None:
-            common_arguments["open_now"] = constraints.open_now
-        common_arguments["minimum_rating"] = (
-            constraints.minimum_rating
-            if constraints.minimum_rating is not None
-            else DEFAULT_MAPBOX_MINIMUM_RATING
-        )
-
-    return [
-        PlannedToolCall(
-            MAPBOX_FORWARD_SEARCH_TOOL_NAME,
-            {
-                "q": query,
-                "language": "vi",
-                "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
-                **common_arguments,
-            },
-        )
-        for query in queries
-    ]
-
-
-def _plan_category_calls(
-    interpretation: SemanticInterpretation,
-    *,
-    max_categories: int,
-) -> list[PlannedToolCall]:
-    categories = resolve_mapbox_categories(
-        interpretation,
-        max_categories=max_categories,
-    )
-    common_arguments = _mapbox_location_arguments(interpretation)
-    if _needs_destination_lookup(interpretation):
-        common_arguments.pop("near", None)
-    constraints = interpretation.constraints
-    minimum_rating = (
-        constraints.minimum_rating
-        if constraints.minimum_rating is not None
-        else DEFAULT_MAPBOX_MINIMUM_RATING
-    )
-    return [
-        PlannedToolCall(
-            MAPBOX_CATEGORY_SEARCH_TOOL_NAME,
-            {
-                "category_id": category,
-                "language": "vi",
-                "limit": DEFAULT_MAPBOX_CATEGORY_REQUEST_LIMIT,
-                "minimum_rating": minimum_rating,
-                **common_arguments,
-            },
-            destination=_primary_destination(interpretation),
-            evidence_kind="poi",
-        )
-        for category in categories
-    ]
-
-
-def _forward_search_target(
-    interpretation: SemanticInterpretation,
-) -> SearchTargetType:
-    if interpretation.entities.search_target is not None:
-        return interpretation.entities.search_target
-    if interpretation.entities.places:
-        return SearchTargetType.POI
-    return SearchTargetType.PLACE
-
-
-def _plan_reverse_call(
-    interpretation: SemanticInterpretation,
-) -> PlannedToolCall | None:
-    location = interpretation.location
-    if location.longitude is None or location.latitude is None:
-        return None
-    return PlannedToolCall(
-        MAPBOX_REVERSE_LOOKUP_TOOL_NAME,
-        {
-            "longitude": location.longitude,
-            "latitude": location.latitude,
-            "language": "vi",
-            "limit": DEFAULT_MAPBOX_RESULT_LIMIT,
-        },
-    )
-
-
-def _mapbox_location_arguments(
-    interpretation: SemanticInterpretation,
-) -> dict[str, Any]:
-    location = interpretation.location
-    arguments: dict[str, Any] = {}
-    near = location.near
-    if near is None and interpretation.entities.destinations:
-        near = interpretation.entities.destinations[0]
-    if near:
-        arguments["near"] = near
-    if location.longitude is not None and location.latitude is not None:
-        arguments["proximity"] = f"{location.longitude},{location.latitude}"
-        if location.radius_km is not None:
-            arguments["radius"] = round(
-                location.radius_km / _KILOMETERS_PER_DEGREE,
-                6,
-            )
-    return arguments
-
-
-def _deduplicate_calls(
-    calls: list[PlannedToolCall],
-) -> tuple[PlannedToolCall, ...]:
-    unique_calls: list[PlannedToolCall] = []
-    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
-    for call in calls:
-        key = (
-            call.name,
-            tuple(sorted((name, repr(value)) for name, value in call.arguments.items())),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_calls.append(call)
-    return tuple(unique_calls)
+    return deduplicate_calls(calls)
 
 
 __all__ = [
