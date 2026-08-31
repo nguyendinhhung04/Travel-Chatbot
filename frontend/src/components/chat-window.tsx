@@ -6,6 +6,7 @@ import ChatEmptyState from "@/components/chat-empty-state";
 import ChatMessage from "@/components/chat-message";
 import QuickRecommendations from "@/components/quick-recommendations";
 import { getMockRecommendations } from "@/data/mock-recommendations";
+import { LiveTranscriptionSession } from "@/lib/live-transcription";
 import type {
   ChatErrorResponse,
   ChatItinerary,
@@ -41,6 +42,7 @@ const LOCATION_ERROR = "Không thể lấy vị trí hiện tại. Hãy bật GP
 const MAX_CONVERSATION_TURNS = 3;
 const MAX_HISTORY_MESSAGES = MAX_CONVERSATION_TURNS * 2;
 const CHAT_STORAGE_KEY = "travel_chat_messages";
+type SpeechState = "idle" | "requesting" | "listening" | "stopping";
 
 function trimMessages(messages: ChatMessageType[]) {
   return messages.slice(-MAX_HISTORY_MESSAGES);
@@ -263,7 +265,147 @@ export default function ChatWindow({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [speechState, setSpeechState] = useState<SpeechState>("idle");
+  const [speechError, setSpeechError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const speechSessionRef = useRef<LiveTranscriptionSession | null>(null);
+  const speechStateRef = useRef<SpeechState>("idle");
+  const speechDraftRef = useRef("");
+  const speechSegmentsRef = useRef<string[]>([]);
+  const speechInterimRef = useRef("");
+  const speechFinalizeResolveRef = useRef<(() => void) | null>(null);
+  const speechFinalizeTimerRef = useRef<number | null>(null);
+
+  function setSpeechMode(nextState: SpeechState) {
+    speechStateRef.current = nextState;
+    setSpeechState(nextState);
+  }
+
+  function renderSpeechInput() {
+    const spokenText = [
+      ...speechSegmentsRef.current,
+      speechInterimRef.current,
+    ]
+      .map((text) => text.trim())
+      .filter(Boolean)
+      .join(" ");
+    const draft = speechDraftRef.current.trim();
+    setInput(spokenText ? `${draft}${draft ? " " : ""}${spokenText}` : draft);
+  }
+
+  function resolveSpeechFinalize() {
+    if (speechFinalizeTimerRef.current !== null) {
+      window.clearTimeout(speechFinalizeTimerRef.current);
+      speechFinalizeTimerRef.current = null;
+    }
+    speechFinalizeResolveRef.current?.();
+    speechFinalizeResolveRef.current = null;
+  }
+
+  async function startSpeech() {
+    if (loading || speechStateRef.current !== "idle") return;
+
+    speechDraftRef.current = input;
+    speechSegmentsRef.current = [];
+    speechInterimRef.current = "";
+    setSpeechError(null);
+    setSpeechMode("requesting");
+    const session = new LiveTranscriptionSession({
+      onInterim: (text) => {
+        speechInterimRef.current = text;
+        renderSpeechInput();
+      },
+      onFinal: (text) => {
+        const finalized = text.trim();
+        if (finalized) speechSegmentsRef.current.push(finalized);
+        speechInterimRef.current = "";
+        renderSpeechInput();
+        resolveSpeechFinalize();
+      },
+      onError: (sessionError) => {
+        setSpeechError(sessionError.message);
+        resolveSpeechFinalize();
+        if (speechStateRef.current !== "stopping") {
+          setSpeechMode("idle");
+          if (speechSessionRef.current === session) {
+            speechSessionRef.current = null;
+            void session.close();
+          }
+        }
+      },
+    });
+    speechSessionRef.current = session;
+
+    try {
+      await session.start();
+      if (speechSessionRef.current !== session) return;
+      setSpeechMode("listening");
+    } catch (startError) {
+      const wasCancelled = speechSessionRef.current !== session;
+      if (speechSessionRef.current === session) speechSessionRef.current = null;
+      if (wasCancelled) {
+        setSpeechMode("idle");
+        return;
+      }
+      setSpeechError(
+        startError instanceof Error
+          ? startError.message
+          : "Không thể khởi tạo microphone.",
+      );
+      setSpeechMode("idle");
+    }
+  }
+
+  async function stopSpeech() {
+    if (
+      speechStateRef.current !== "listening" &&
+      speechStateRef.current !== "requesting"
+    ) return;
+    const session = speechSessionRef.current;
+    if (!session) {
+      setSpeechMode("idle");
+      return;
+    }
+
+    const wasRequesting = speechStateRef.current === "requesting";
+    setSpeechError(null);
+    setSpeechMode("stopping");
+
+    // Allow cancelling while token/WebSocket setup is still pending.
+    if (wasRequesting) {
+      // The session is still in the requesting phase when stop is clicked.
+      // Closing it rejects the pending setup promise and releases the mic.
+      speechSessionRef.current = null;
+      await session.close();
+      setSpeechMode("idle");
+      return;
+    }
+
+    const finalized = new Promise<void>((resolve) => {
+      speechFinalizeResolveRef.current = resolve;
+      speechFinalizeTimerRef.current = window.setTimeout(resolve, 2_000);
+    });
+
+    try {
+      await session.end();
+      await finalized;
+    } catch (stopError) {
+      setSpeechError(
+        stopError instanceof Error
+          ? stopError.message
+          : "Không thể dừng microphone.",
+      );
+    } finally {
+      resolveSpeechFinalize();
+      await session.close();
+      if (speechSessionRef.current === session) speechSessionRef.current = null;
+      setSpeechMode("idle");
+    }
+  }
+
+  useEffect(() => () => {
+    void speechSessionRef.current?.close();
+  }, []);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -452,6 +594,11 @@ export default function ChatWindow({
   }
 
   function startNewConversation() {
+    void speechSessionRef.current?.close();
+    speechSessionRef.current = null;
+    resolveSpeechFinalize();
+    setSpeechMode("idle");
+    setSpeechError(null);
     setMessages([]);
     setError(null);
     setInput("");
@@ -520,8 +667,12 @@ export default function ChatWindow({
       <ChatComposer
         value={input}
         loading={loading}
+        speechState={speechState}
+        speechError={speechError}
         onChange={setInput}
         onSubmit={() => void sendMessage()}
+        onStartSpeech={() => void startSpeech()}
+        onStopSpeech={() => void stopSpeech()}
       />
     </section>
   );

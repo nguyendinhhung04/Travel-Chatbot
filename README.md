@@ -313,6 +313,7 @@ Cấu hình `frontend/.env`:
 
 ```env
 BACKEND_URL=http://127.0.0.1:8000
+DOTNET_BACKEND_URL=http://localhost:5257
 NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=your_public_mapbox_token
 ```
 

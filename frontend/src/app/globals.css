@@ -516,7 +516,7 @@ textarea:disabled {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 10px;
   padding: 17px 22px 14px;
   background: rgba(255, 255, 255, 0.9);
@@ -802,6 +802,39 @@ textarea:disabled {
   color: var(--ink);
   font-size: 18px;
   letter-spacing: -0.03em;
+}
+
+.speech-button {
+  display: inline-flex;
+  min-width: 82px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  color: #56677e;
+  background: #eef3f8;
+  border: 1px solid #d5dfe9;
+  border-radius: 14px;
+}
+
+.speech-button:hover:not(:disabled),
+.speech-button:focus-visible {
+  color: var(--accent-deep);
+  border-color: #eeaf9e;
+  outline: none;
+}
+
+.speech-button-listening {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.speech-error {
+  grid-column: 1 / -1;
+  padding-left: 3px;
+  color: #b74b37;
+  font-size: 11px;
 }
 
 .map-itinerary-summary {

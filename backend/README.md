@@ -64,6 +64,15 @@ dotnet user-secrets set "Mapbox:AccessToken" "YOUR_MAPBOX_ACCESS_TOKEN"
 
 Hoặc cấu hình biến môi trường `Mapbox__AccessToken`.
 
+Gemini Live cần API key ở .NET User Secrets, không đưa key này vào frontend:
+
+```powershell
+dotnet user-secrets set "GeminiLive:ApiKey" "YOUR_GEMINI_API_KEY"
+```
+
+Endpoint `POST /api/speech/ephemeral-token` chỉ cấp token ngắn hạn, một lần dùng,
+đã khóa cho model `gemini-3.5-transcribe-live`, TEXT-only, SMART `vi-VN` và manual VAD.
+
 ## Chạy và kiểm thử
 
 ```powershell
