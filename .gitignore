@@ -55,6 +55,12 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 
+# .NET
+bin/
+obj/
+.vs/
+*.user
+
 # Logs
 *.log
 npm-debug.log*

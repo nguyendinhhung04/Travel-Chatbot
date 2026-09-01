@@ -1,113 +1,92 @@
-# Travel Chatbot Backend
+# Mapbox Search API backend
 
-Django backend cho chatbot du lich RAG, dung Gemini Embedding va ChromaDB.
+ASP.NET Core backend tách riêng ba vai trò:
 
-## Setup
+- `Mapbox`: chứa `IMapboxClient`, HTTP client, request model và raw response dùng chung.
+- `Chatbot/Tools/Mapbox`: chứa các typed tool handler dành cho chatbot.
+- `Controllers`: cung cấp HTTP API cho Django chatbot.
+
+Controller gọi các typed chatbot tool; tool gọi `IMapboxClient`, không tự dựng URL và
+không nhận Mapbox access token từ người dùng.
+
+## Chatbot tools
+
+Backend đăng ký bốn Mapbox tool đọc dữ liệu trong dependency injection:
+
+- `mapbox_forward_search`
+- `mapbox_category_search`
+- `mapbox_reverse_lookup`
+- `mapbox_resolve_candidates`: nhận tối đa 5 candidate theo batch, xác minh,
+  matching, loại trùng và trả thêm POI theo category.
+
+Các tool hiện là typed C# handler độc lập, chưa kết nối với Gemini, Semantic Kernel hoặc
+một AI SDK cụ thể. Mỗi tool trả `ToolResult<T>` gồm `success`, `data`, `errorCode` và
+`errorMessage`.
+
+Ba endpoint forward/category/reverse chỉ trả DTO gọn cho Django và không chứa raw
+GeoJSON: Mapbox ID, tên, địa chỉ, tọa độ, category hiển thị, trạng thái hoạt động,
+khoảng cách, ETA, rating và attribution. Các field kỹ thuật `featureType`,
+`poiCategoryIds`, `popularity` chỉ được giữ trong typed tool nội bộ để matching và
+xếp hạng. Endpoint `mapbox-resolve-candidates` vẫn trả contract đầy đủ để không làm
+mất evidence của nhánh khám phá điểm đến. Field tùy chọn có giá trị `null` không được
+serialize qua HTTP.
+Category ID cho chatbot do Semantic Interpretation và category resolver phía Django
+chọn từ whitelist; không cần tải Category List trong mỗi lượt hỏi. Response Mapbox
+không được cache hoặc lưu lâu dài.
+
+Các mã lỗi tool:
+
+- `invalid_input`
+- `mapbox_http_error`
+- `mapbox_timeout`
+- `mapbox_unavailable`
+- `mapbox_invalid_response`
+
+Backend cung cấp các endpoint nội bộ cho Django:
+
+```http
+POST /api/chatbot/tools/mapbox-forward-search
+POST /api/chatbot/tools/mapbox-category-search
+POST /api/chatbot/tools/mapbox-reverse-lookup
+POST /api/chatbot/tools/mapbox-resolve-candidates
+```
+
+Các endpoint này trả `ToolResult<T>` đã được chuẩn hóa cho Django; access token chỉ nằm
+ở backend .NET.
+
+## Cấu hình token
+
+Tại thư mục `backend/backend`, lưu token bằng .NET User Secrets:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+dotnet user-secrets set "Mapbox:AccessToken" "YOUR_MAPBOX_ACCESS_TOKEN"
 ```
 
-Tao file `.env`:
+Hoặc cấu hình biến môi trường `Mapbox__AccessToken`.
 
-```env
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
-```
-
-## Kiem Tra
+Gemini Live cần API key ở .NET User Secrets, không đưa key này vào frontend:
 
 ```powershell
-.\.venv\Scripts\python.exe manage.py check
-.\.venv\Scripts\python.exe manage.py test
-.\.venv\Scripts\python.exe manage.py ingest_knowledge --dry-run
+dotnet user-secrets set "GeminiLive:ApiKey" "YOUR_GEMINI_API_KEY"
 ```
 
-## Ingest Knowledge Base
+Endpoint `POST /api/speech/ephemeral-token` chỉ cấp token ngắn hạn, một lần dùng,
+đã khóa cho model `gemini-3.5-transcribe-live`, TEXT-only, SMART `vi-VN` và manual VAD.
 
-Chay ingest that de tao/cap nhat `chroma_db/`:
+## Chạy và kiểm thử
 
 ```powershell
-.\.venv\Scripts\python.exe manage.py ingest_knowledge
+dotnet run
 ```
 
-Chay lai lan 2 de kiem tra dong bo on dinh. Neu du lieu khong doi, output nen co `Added: 0`.
+Trong môi trường Development, Swagger UI được mở tự động tại:
 
-## Thu Retrieval
+```text
+http://localhost:5257/swagger
+```
 
-Retrieval tim cac chunk gan voi cau hoi nhat trong ChromaDB. `Top K` la so
-chunk ung vien toi da; mac dinh la 5. He thong chi giu cac chunk co relevance
-score tu `0.5` tro len. Vi vay so chunk thuc te co the it hon `Top K`, hoac bang
-0 neu khong co chunk nao du lien quan.
-
-Tren PowerShell, dat encoding UTF-8 de hien thi tieng Viet dung:
+OpenAPI JSON nằm tại `http://localhost:5257/swagger/v1/swagger.json`.
 
 ```powershell
-$env:PYTHONIOENCODING = "utf-8"
+dotnet test backend.slnx
 ```
-
-Chay mot cau hoi:
-
-```powershell
-.\.venv\Scripts\python.exe manage.py retrieve_knowledge "Ngũ Hành Sơn có phải chỉ là một ngọn núi không?"
-```
-
-Muon thay doi so chunk:
-
-```powershell
-.\.venv\Scripts\python.exe manage.py retrieve_knowledge "Huế có những hoạt động gì?" --top-k 3
-```
-
-Ket qua hien thi thu hang, `source`, `title`, heading va mot doan noi dung cua
-tung chunk. Can ingest Knowledge Base truoc khi thu Retrieval.
-
-## Thu RAG Chat
-
-Sau khi Knowledge Base da ingest, co the thu luong RAG day du bang command:
-
-```powershell
-$env:PYTHONIOENCODING = "utf-8"
-.\.venv\Scripts\python.exe manage.py ask_travel "Hue co nhung hoat dong gi?"
-```
-
-Co the thay doi so chunk duoc dua vao Context:
-
-```powershell
-.\.venv\Scripts\python.exe manage.py ask_travel "Di Hoi An tu Da Nang mat bao lau?" --top-k 3
-```
-
-Command hien thi cau tra loi va cac `title`/`source` cua chunks da duoc dung.
-Neu Knowledge Base khong co du thong tin, chatbot tra ve:
-`Knowledge Base hien chua co du thong tin.`
-
-## Thu Chat API
-
-Sau khi da ingest Knowledge Base va cau hinh `GEMINI_API_KEY`, khoi dong server:
-
-```powershell
-.\.venv\Scripts\python.exe manage.py runserver
-```
-
-Goi endpoint bang PowerShell:
-
-```powershell
-$body = @{ message = "Hue co nhung hoat dong gi?" } | ConvertTo-Json
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:8000/api/chat/" `
-  -ContentType "application/json; charset=utf-8" `
-  -Body $body
-```
-
-Response gom `answer` va danh sach `sources` (khong lap tai lieu). Cau hoi khong hop le tra `400`; loi Gemini,
-Embedding hoac Chroma tra `503` voi thong bao an toan.
-
-## Chay Server
-
-```powershell
-.\.venv\Scripts\python.exe manage.py runserver
-```
-
-Mac dinh server chay tai `http://127.0.0.1:8000/`.

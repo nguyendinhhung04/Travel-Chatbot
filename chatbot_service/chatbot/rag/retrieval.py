@@ -1,0 +1,93 @@
+"""Create a LangChain Retriever for the travel knowledge base."""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.vectorstores import VectorStoreRetriever
+
+from .vector_store import get_vector_store
+
+
+def _resolve_top_k(top_k: int | None) -> int:
+    """Return and validate the configured number of search results."""
+    if top_k is None:
+        from django.conf import settings
+
+        top_k = settings.RAG_RETRIEVAL_TOP_K
+
+    if isinstance(top_k, bool) or not isinstance(top_k, int):
+        raise ValueError("top_k must be an integer")
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero")
+    return top_k
+
+
+def get_retriever(
+    *,
+    vector_store: Chroma | None = None,
+    top_k: int | None = None,
+    destination: str | None = None,
+) -> VectorStoreRetriever:
+    """Create a similarity Retriever backed by the persistent Chroma store.
+
+    ``vector_store`` can be supplied by tests or by another caller. When it is
+    omitted, the configured travel knowledge collection is opened automatically.
+    """
+    from django.conf import settings
+
+    resolved_top_k = _resolve_top_k(top_k)
+    store = vector_store if vector_store is not None else get_vector_store()
+    search_kwargs = {
+        "k": resolved_top_k,
+        "score_threshold": settings.RAG_RELEVANCE_THRESHOLD,
+    }
+    normalized_destination = normalize_destination(destination)
+    if normalized_destination is not None:
+        search_kwargs["filter"] = {"destination": normalized_destination}
+
+    return store.as_retriever(
+        search_type="similarity_score_threshold",
+        search_kwargs=search_kwargs,
+    )
+
+
+def normalize_destination(destination: str | None) -> str | None:
+    """Normalize a Vietnamese destination name to the KB metadata slug."""
+    if destination is None:
+        return None
+    cleaned_destination = destination.strip().lower()
+    if not cleaned_destination:
+        return None
+    cleaned_destination = cleaned_destination.replace("đ", "d")
+    ascii_destination = unicodedata.normalize("NFKD", cleaned_destination).encode(
+        "ascii", "ignore"
+    ).decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_destination).strip("-")
+    return slug or None
+
+
+def retrieve_documents(
+    question: str,
+    *,
+    retriever: VectorStoreRetriever | None = None,
+    top_k: int | None = None,
+    destination: str | None = None,
+) -> list[Document]:
+    """Search the knowledge base and return the most relevant documents."""
+    cleaned_question = question.strip()
+    if not cleaned_question:
+        raise ValueError("question must not be empty")
+
+    active_retriever = (
+        retriever
+        if retriever is not None
+        else get_retriever(top_k=top_k, destination=destination)
+    )
+    return active_retriever.invoke(cleaned_question)
+
+
+__all__ = ["get_retriever", "normalize_destination", "retrieve_documents"]
