@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Backend.Mapbox;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Backend.Tests;
@@ -23,7 +24,8 @@ public sealed class MapboxClientTests
         };
         var client = new MapboxClient(
             httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
 
         var response = await client.ForwardSearchAsync(
             new MapboxForwardSearchRequest
@@ -45,34 +47,6 @@ public sealed class MapboxClientTests
     }
 
     [Fact]
-    public async Task ListCategoriesAsync_ForwardsLanguageAndAddsServerToken()
-    {
-        var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(
-                "{\"listItems\":[{\"canonical_id\":\"restaurant\",\"name\":\"Restaurant\"}]}",
-                Encoding.UTF8,
-                "application/json")
-        });
-        var httpClient = new HttpClient(handler)
-        {
-            BaseAddress = new Uri("https://api.mapbox.com/")
-        };
-        var client = new MapboxClient(
-            httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
-
-        var response = await client.ListCategoriesAsync(" en ", CancellationToken.None);
-
-        Assert.Equal(200, response.StatusCode);
-        Assert.Contains("restaurant", response.Body);
-        Assert.NotNull(handler.RequestUri);
-        Assert.Equal("/search/searchbox/v1/list/category", handler.RequestUri.AbsolutePath);
-        Assert.Contains("language=en", handler.RequestUri.Query);
-        Assert.Contains("access_token=server-token", handler.RequestUri.Query);
-    }
-
-    [Fact]
     public async Task SearchCategoryAsync_ForwardsCategoryAndSupportedParameters()
     {
         var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
@@ -88,7 +62,8 @@ public sealed class MapboxClientTests
         };
         var client = new MapboxClient(
             httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
 
         var response = await client.SearchCategoryAsync(
             " food_and_drink ",
@@ -129,7 +104,8 @@ public sealed class MapboxClientTests
         };
         var client = new MapboxClient(
             httpClient,
-            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
 
         var response = await client.ReverseLookupAsync(
             new MapboxReverseLookupRequest
@@ -157,16 +133,79 @@ public sealed class MapboxClientTests
         Assert.Contains("access_token=server-token", handler.RequestUri.Query);
     }
 
+    [Fact]
+    public async Task RetrievePlacesAsync_PostsIdsAndAddsServerToken()
+    {
+        var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"results\":[]}",
+                Encoding.UTF8,
+                "application/json")
+        });
+        var client = new MapboxClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://api.mapbox.com/") },
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }),
+            NullLogger<MapboxClient>.Instance);
+
+        await client.RetrievePlacesAsync(
+            ["mapbox.poi.1", "mapbox.poi.2"],
+            CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Post, handler.Method);
+        Assert.Equal("/places/v1/details/retrieve", handler.RequestUri?.AbsolutePath);
+        Assert.Contains("access_token=server-token", handler.RequestUri?.Query);
+        Assert.Equal("{\"ids\":[\"mapbox.poi.1\",\"mapbox.poi.2\"]}", handler.RequestBody);
+    }
+
+    [Fact]
+    public async Task OptimizationClient_UsesInvariantCoordinatesAndRequiredOptions()
+    {
+        var handler = new RecordingHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"code\":\"Ok\"}",
+                Encoding.UTF8,
+                "application/json")
+        });
+        var client = new MapboxOptimizationClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://api.mapbox.com/") },
+            Options.Create(new MapboxOptions { AccessToken = "server-token" }));
+
+        var response = await client.OptimizeAsync(
+            "driving",
+            [(105.81, 21.01), (105.82, 21.02)],
+            CancellationToken.None);
+
+        Assert.Equal(200, response.StatusCode);
+        Assert.Equal(HttpMethod.Get, handler.Method);
+        Assert.Equal(
+            "/optimized-trips/v1/mapbox/driving/105.81,21.01;105.82,21.02",
+            Uri.UnescapeDataString(handler.RequestUri?.AbsolutePath ?? string.Empty));
+        Assert.Contains("roundtrip=false", handler.RequestUri?.Query);
+        Assert.Contains("source=first", handler.RequestUri?.Query);
+        Assert.Contains("destination=last", handler.RequestUri?.Query);
+        Assert.Contains("geometries=geojson", handler.RequestUri?.Query);
+        Assert.Contains("overview=full", handler.RequestUri?.Query);
+        Assert.Contains("access_token=server-token", handler.RequestUri?.Query);
+    }
+
     private sealed class RecordingHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         public Uri? RequestUri { get; private set; }
+        public HttpMethod? Method { get; private set; }
+        public string? RequestBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             RequestUri = request.RequestUri;
-            return Task.FromResult(response);
+            Method = request.Method;
+            RequestBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            return response;
         }
     }
 }

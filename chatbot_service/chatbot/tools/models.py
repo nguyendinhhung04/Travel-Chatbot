@@ -149,6 +149,47 @@ class MapboxPlaceSummaryData(ToolModel):
     results: list[MapboxPlaceSummaryItem]
 
 
+class MapboxPlacesDetailsInput(ToolModel):
+    ids: list[NonEmptyString] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_unique_ids(self) -> "MapboxPlacesDetailsInput":
+        if len(set(self.ids)) != len(self.ids):
+            raise ValueError("ids must not contain duplicates")
+        return self
+
+
+class MapboxPlacePhoto(ToolModel):
+    url: NonEmptyString
+    width: int | None = Field(default=None, gt=0)
+    height: int | None = Field(default=None, gt=0)
+    source: str | None = None
+
+
+class MapboxPlaceDetailsItem(ToolModel):
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    full_address: str | None = Field(default=None, alias="fullAddress")
+    brand: str | None = None
+    primary_category: str | None = Field(default=None, alias="primaryCategory")
+    categories: list[str] = Field(default_factory=list)
+    opening_hours: str | None = Field(default=None, alias="openingHours")
+    permanently_closed: bool | None = Field(default=None, alias="permanentlyClosed")
+    phone: str | None = None
+    website: str | None = None
+    status: str | None = None
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    popularity: float | None = Field(default=None, ge=0, le=1)
+    photos: list[MapboxPlacePhoto] = Field(default_factory=list)
+
+
+class MapboxPlacesDetailsData(ToolModel):
+    results: list[MapboxPlaceDetailsItem]
+    missing: list[str] = Field(default_factory=list)
+    unprocessed: list[str] = Field(default_factory=list)
+
+
 class MapboxCandidateInput(ToolModel):
     candidate_id: NonEmptyString = Field(alias="candidateId")
     name: NonEmptyString
@@ -201,6 +242,147 @@ class MapboxCandidateResolutionData(ToolModel):
     additional_places: list[MapboxPlaceItem] = Field(alias="additionalPlaces")
 
 
+class ItineraryStopInput(ToolModel):
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+
+class ItineraryStopData(ItineraryStopInput):
+    id: NonEmptyString
+    order: int = Field(ge=1, le=12)
+    input_index: int = Field(alias="inputIndex", ge=0, le=11)
+
+
+class ItineraryGeometryData(ToolModel):
+    type: Literal["LineString"]
+    coordinates: list[list[float]] = Field(min_length=2)
+
+
+class ItineraryData(ToolModel):
+    id: NonEmptyString
+    user_id: Literal["admin"] = Field(alias="userId")
+    version: int = Field(ge=1)
+    title: NonEmptyString
+    destination: NonEmptyString
+    duration_days: int = Field(alias="durationDays", ge=1, le=365)
+    duration_nights: int = Field(alias="durationNights", ge=0, le=365)
+    profile: Literal["driving", "walking", "cycling"]
+    stops: list[ItineraryStopData] = Field(min_length=2, max_length=12)
+    route: ItineraryGeometryData
+    distance_meters: float = Field(alias="distanceMeters", ge=0)
+    duration_seconds: float = Field(alias="durationSeconds", ge=0)
+    provider: Literal["mapbox"] = "mapbox"
+    generated_at: str = Field(alias="generatedAt")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class ItineraryGetInput(ToolModel):
+    itinerary_id: NonEmptyString | None = Field(default=None, alias="itineraryId")
+
+
+class ItineraryCreateInput(ToolModel):
+    title: NonEmptyString
+    destination: NonEmptyString
+    duration_days: int = Field(alias="durationDays", ge=1, le=365)
+    duration_nights: int = Field(alias="durationNights", ge=0, le=365)
+    profile: Literal["driving", "walking", "cycling"]
+    stops: list[ItineraryStopInput] = Field(min_length=2, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_unique_stops(self) -> "ItineraryCreateInput":
+        mapbox_ids = [stop.mapbox_id for stop in self.stops]
+        if len(mapbox_ids) != len(set(mapbox_ids)):
+            raise ValueError("stops must not contain duplicate mapboxId values")
+        return self
+
+
+class ItineraryAddStopInput(ToolModel):
+    itinerary_id: NonEmptyString = Field(alias="itineraryId")
+    expected_version: int = Field(alias="expectedVersion", ge=1)
+    stop: ItineraryStopInput
+    position: Literal["first", "last", "optimized"] = "optimized"
+
+
+class MapboxOptimizationStopInput(ToolModel):
+    """One verified POI passed to the Mapbox Optimization endpoint."""
+
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+
+class MapboxOptimizeRouteInput(ToolModel):
+    """Arguments accepted by the Mapbox route-optimization typed endpoint."""
+
+    profile: Literal["driving", "walking", "cycling"]
+    stops: list[MapboxOptimizationStopInput] = Field(min_length=2, max_length=12)
+
+    @model_validator(mode="after")
+    def validate_unique_stops(self) -> "MapboxOptimizeRouteInput":
+        mapbox_ids = [stop.mapbox_id for stop in self.stops]
+        if len(mapbox_ids) != len(set(mapbox_ids)):
+            raise ValueError("stops must not contain duplicate mapboxId values")
+        return self
+
+
+class MapboxOptimizedStop(ToolModel):
+    order: int = Field(ge=1)
+    input_index: int = Field(alias="inputIndex", ge=0)
+    mapbox_id: NonEmptyString = Field(alias="mapboxId")
+    name: NonEmptyString
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+
+class MapboxRouteGeometry(ToolModel):
+    type: Literal["LineString"]
+    coordinates: list[tuple[float, float]] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "MapboxRouteGeometry":
+        for longitude, latitude in self.coordinates:
+            if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
+                raise ValueError(
+                    "route coordinates must be valid longitude/latitude pairs"
+                )
+        return self
+
+
+class MapboxOptimizedRouteData(ToolModel):
+    profile: Literal["driving", "walking", "cycling"]
+    ordered_stops: list[MapboxOptimizedStop] = Field(
+        alias="orderedStops",
+        min_length=2,
+        max_length=12,
+    )
+    geometry: MapboxRouteGeometry
+    distance_meters: float = Field(alias="distanceMeters", ge=0)
+    duration_seconds: float = Field(alias="durationSeconds", ge=0)
+
+    @model_validator(mode="after")
+    def validate_stop_order(self) -> "MapboxOptimizedRouteData":
+        expected_orders = list(range(1, len(self.ordered_stops) + 1))
+        if [stop.order for stop in self.ordered_stops] != expected_orders:
+            raise ValueError(
+                "orderedStops must be sorted with contiguous order values"
+            )
+        input_indexes = [stop.input_index for stop in self.ordered_stops]
+        if sorted(input_indexes) != list(range(len(self.ordered_stops))):
+            raise ValueError(
+                "orderedStops must contain every inputIndex exactly once"
+            )
+        mapbox_ids = [stop.mapbox_id for stop in self.ordered_stops]
+        if len(mapbox_ids) != len(set(mapbox_ids)):
+            raise ValueError(
+                "orderedStops must not contain duplicate mapboxId values"
+            )
+        return self
+
+
 class ToolResult(ToolModel, Generic[ToolData]):
     """Success or failure envelope returned by ASP.NET and local tools."""
 
@@ -244,6 +426,18 @@ class ChatPlace(ToolModel):
     name: NonEmptyString
     longitude: float = Field(ge=-180, le=180)
     latitude: float = Field(ge=-90, le=90)
+    full_address: str | None = Field(default=None, alias="fullAddress")
+    brand: str | None = None
+    primary_category: str | None = Field(default=None, alias="primaryCategory")
+    categories: list[str] = Field(default_factory=list)
+    opening_hours: str | None = Field(default=None, alias="openingHours")
+    permanently_closed: bool | None = Field(default=None, alias="permanentlyClosed")
+    phone: str | None = None
+    website: str | None = None
+    operational_status: str | None = Field(default=None, alias="operationalStatus")
+    rating: float | None = Field(default=None, ge=0, le=5)
+    popularity: float | None = Field(default=None, ge=0, le=1)
+    photos: list[MapboxPlacePhoto] = Field(default_factory=list)
 
 
 ChatSource = Annotated[
@@ -268,17 +462,32 @@ __all__ = [
     "ChatPlace",
     "ChatSource",
     "KnowledgeBaseSource",
+    "ItineraryAddStopInput",
+    "ItineraryData",
+    "ItineraryGeometryData",
+    "ItineraryGetInput",
+    "ItineraryStopData",
+    "ItineraryStopInput",
     "MapboxCategorySearchInput",
     "MapboxCandidateInput",
     "MapboxCandidateMatch",
     "MapboxCandidateResolutionData",
     "MapboxCandidateResolveInput",
     "MapboxForwardSearchInput",
+    "MapboxOptimizationStopInput",
+    "MapboxOptimizeRouteInput",
+    "MapboxOptimizedRouteData",
+    "MapboxOptimizedStop",
     "MapboxPlaceItem",
+    "MapboxPlaceDetailsItem",
+    "MapboxPlacePhoto",
     "MapboxPlaceSummaryData",
     "MapboxPlaceSummaryItem",
     "MapboxPlaceToolData",
+    "MapboxPlacesDetailsData",
+    "MapboxPlacesDetailsInput",
     "MapboxReverseLookupInput",
+    "MapboxRouteGeometry",
     "MapboxSource",
     "RagChunk",
     "RagToolData",

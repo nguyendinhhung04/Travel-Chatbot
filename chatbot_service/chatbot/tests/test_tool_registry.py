@@ -7,6 +7,7 @@ from django.test import SimpleTestCase
 from langchain_core.documents import Document
 
 from chatbot.tools.models import (
+    MapboxOptimizedRouteData,
     MapboxPlaceSummaryData,
     RagToolData,
     ToolResult,
@@ -14,6 +15,7 @@ from chatbot.tools.models import (
 from chatbot.tools.registry import (
     INVALID_ARGUMENTS_ERROR,
     MAPBOX_FORWARD_SEARCH_TOOL_NAME,
+    MAPBOX_OPTIMIZE_ROUTE_TOOL_NAME,
     SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME,
     TOOL_EXECUTION_ERROR,
     UNKNOWN_TOOL_ERROR,
@@ -35,11 +37,16 @@ class ToolRegistryTests(SimpleTestCase):
                 "mapbox_category_search",
                 "mapbox_reverse_lookup",
                 "mapbox_resolve_candidates",
+                "mapbox_optimize_route",
+                "create_itinerary",
+                "get_itinerary",
+                "add_itinerary_stop",
             },
         )
         tools = {tool.name: tool for tool in self.registry.definitions}
         self.assertEqual(set(tools), self.registry.names)
         self.assertIn("q", tools["mapbox_forward_search"].input_model.model_fields)
+        self.assertIn("stops", tools["mapbox_optimize_route"].input_model.model_fields)
         self.assertIn(
             "category_id",
             tools["mapbox_category_search"].input_model.model_fields,
@@ -141,6 +148,50 @@ class ToolRegistryTests(SimpleTestCase):
         self.assertFalse(execution.success)
         self.assertTrue(execution.system_failure)
         self.assertEqual(execution.error_code, "mapbox_timeout")
+
+    def test_optimize_route_validates_and_returns_mapbox_source(self):
+        self.mapbox_client.optimize_route.return_value = ToolResult[
+            MapboxOptimizedRouteData
+        ].model_validate({
+            "success": True,
+            "data": {
+                "profile": "driving",
+                "orderedStops": [
+                    {"order": 1, "inputIndex": 0, "mapboxId": "poi-1", "name": "A", "longitude": 105.8, "latitude": 21.0},
+                    {"order": 2, "inputIndex": 1, "mapboxId": "poi-2", "name": "B", "longitude": 105.9, "latitude": 21.1},
+                ],
+                "geometry": {"type": "LineString", "coordinates": [[105.8, 21.0], [105.9, 21.1]]},
+                "distanceMeters": 1000,
+                "durationSeconds": 600,
+            },
+        })
+
+        execution = self.registry.execute(
+            MAPBOX_OPTIMIZE_ROUTE_TOOL_NAME,
+            {
+                "profile": "driving",
+                "stops": [
+                    {"mapboxId": "poi-1", "name": "A", "longitude": 105.8, "latitude": 21.0},
+                    {"mapboxId": "poi-2", "name": "B", "longitude": 105.9, "latitude": 21.1},
+                ],
+            },
+        )
+
+        self.assertTrue(execution.success)
+        self.assertEqual(execution.sources[0].attribution, "© Mapbox")
+        self.mapbox_client.optimize_route.assert_called_once()
+
+        invalid = self.registry.execute(
+            MAPBOX_OPTIMIZE_ROUTE_TOOL_NAME,
+            {
+                "profile": "driving",
+                "stops": [
+                    {"mapboxId": "poi-1", "name": "A", "longitude": 105.8, "latitude": 21.0},
+                    {"mapboxId": "poi-1", "name": "A", "longitude": 105.8, "latitude": 21.0},
+                ],
+            },
+        )
+        self.assertEqual(invalid.error_code, INVALID_ARGUMENTS_ERROR)
 
     def test_unexpected_handler_error_is_safe_system_failure(self):
         self.mapbox_client.forward_search.side_effect = RuntimeError(

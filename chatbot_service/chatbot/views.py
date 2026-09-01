@@ -2,6 +2,7 @@
 
 import logging
 
+from langchain_core.exceptions import OutputParserException
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -34,11 +35,28 @@ class ChatAPIView(APIView):
             if location_data is not None
             else None
         )
+        active_itinerary_id = serializer.validated_data.get("active_itinerary_id")
+        active_itinerary_version = serializer.validated_data.get(
+            "active_itinerary_version"
+        )
         try:
             result = orchestrate_chat(
                 message,
                 history=history,
                 current_location=current_location,
+                active_itinerary_id=active_itinerary_id,
+                active_itinerary_version=active_itinerary_version,
+            )
+        except OutputParserException:
+            logger.exception("Travel chatbot semantic interpretation failed")
+            return Response(
+                {
+                    "error": (
+                        "Chatbot chưa hiểu được thao tác lịch trình. "
+                        "Vui lòng diễn đạt lại yêu cầu."
+                    )
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
         except Exception:
             logger.exception("Travel chatbot request failed")
@@ -59,19 +77,31 @@ class ChatAPIView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        return Response(
-            {
-                "answer": result.answer,
-                "sources": [
-                    source.model_dump(mode="json") for source in result.sources
-                ],
-                "places": [
-                    place.model_dump(mode="json", by_alias=True)
-                    for place in result.places
-                ],
-            },
-            status=status.HTTP_200_OK,
-        )
+        payload = {
+            "answer": result.answer,
+            "sources": [
+                source.model_dump(mode="json") for source in result.sources
+            ],
+            "places": [
+                place.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude_none=True,
+                    exclude_defaults=True,
+                )
+                for place in result.places
+            ],
+        }
+        if result.itinerary is not None:
+            payload["itinerary"] = result.itinerary.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+            )
+        if result.itinerary_operation is not None:
+            payload["itineraryOperation"] = result.itinerary_operation
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 __all__ = ["CHAT_SERVICE_ERROR", "ChatAPIView"]

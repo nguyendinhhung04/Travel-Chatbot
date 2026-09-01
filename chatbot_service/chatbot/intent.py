@@ -10,6 +10,8 @@ class TravelIntent(str, Enum):
     PLACE_SEARCH = "place_search"
     PLACE_DETAILS = "place_details"
     TRAVEL_QA = "travel_qa"
+    ITINERARY_MAKING = "itinerary_making"
+    ITINERARY_MANAGEMENT = "itinerary_management"
     ITINERARY_ADVICE = "itinerary_advice"
     TRANSPORTATION_QA = "transportation_qa"
     BUDGET_QA = "budget_qa"
@@ -30,6 +32,12 @@ INTENT_DESCRIPTIONS: dict[TravelIntent, str] = {
     ),
     TravelIntent.TRAVEL_QA: (
         "Hỏi đáp kiến thức, kinh nghiệm, văn hóa, thời điểm đi hoặc chuẩn bị chuyến đi."
+    ),
+    TravelIntent.ITINERARY_MAKING: (
+        "Tạo một lịch trình cụ thể có các địa điểm theo thứ tự để chuẩn bị tính và hiển thị route."
+    ),
+    TravelIntent.ITINERARY_MANAGEMENT: (
+        "Xem, thêm, xóa, thay thế hoặc sắp xếp điểm dừng trong một lịch trình đang tồn tại."
     ),
     TravelIntent.ITINERARY_ADVICE: (
         "Tư vấn tạo hoặc điều chỉnh lịch trình dạng văn bản, không lưu hay tính route."

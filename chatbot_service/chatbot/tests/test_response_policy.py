@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 from chatbot.intent import TravelIntent
 from chatbot.response_policy import (
     DESTINATION_DISCOVERY_POLICY,
+    ITINERARY_MAKING_POLICY,
     MAPBOX_FIRST_POLICY,
     RAG_FIRST_ADVICE_POLICY,
     response_policy_for,
@@ -12,6 +13,14 @@ from chatbot.response_policy import (
 
 
 class ResponsePolicyTests(SimpleTestCase):
+    def test_itinerary_making_requires_verified_optimized_route(self):
+        policy = response_policy_for(TravelIntent.ITINERARY_MAKING)
+
+        self.assertEqual(policy, ITINERARY_MAKING_POLICY)
+        self.assertIn("success=true", policy)
+        self.assertIn("Không tự tạo điểm dừng", policy)
+        self.assertIn("Không tuyên bố lịch trình đã được lưu", policy)
+
     def test_destination_discovery_uses_rag_model_then_mapbox(self):
         policy = response_policy_for(TravelIntent.DESTINATION_DISCOVERY)
 

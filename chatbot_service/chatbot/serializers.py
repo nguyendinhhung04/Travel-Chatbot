@@ -57,6 +57,24 @@ class ChatRequestSerializer(serializers.Serializer):
         max_length=6,
     )
     current_location = CurrentLocationSerializer(required=False)
+    active_itinerary_id = serializers.RegexField(
+        regex=r"^[0-9a-fA-F]{24}$",
+        required=False,
+        allow_blank=False,
+    )
+    active_itinerary_version = serializers.IntegerField(
+        required=False,
+        min_value=1,
+    )
+
+    def validate(self, attrs):
+        has_id = "active_itinerary_id" in attrs
+        has_version = "active_itinerary_version" in attrs
+        if has_id != has_version:
+            raise serializers.ValidationError(
+                "active_itinerary_id and active_itinerary_version must be provided together."
+            )
+        return attrs
 
     def to_internal_value(self, data):
         """Reject non-string messages before CharField coerces their value."""

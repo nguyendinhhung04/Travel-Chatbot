@@ -15,6 +15,8 @@ public sealed class ChatbotToolsControllerTests
     [InlineData(nameof(ChatbotToolsController.ForwardSearch), "mapbox-forward-search")]
     [InlineData(nameof(ChatbotToolsController.CategorySearch), "mapbox-category-search")]
     [InlineData(nameof(ChatbotToolsController.ReverseLookup), "mapbox-reverse-lookup")]
+    [InlineData(nameof(ChatbotToolsController.RetrievePlaceDetails), "mapbox-place-details-batch")]
+    [InlineData(nameof(ChatbotToolsController.OptimizeRoute), "mapbox-optimize-route")]
     public void Actions_ExposeExpectedPostRoutes(string actionName, string route)
     {
         var controllerRoute = typeof(ChatbotToolsController)
@@ -241,6 +243,59 @@ public sealed class ChatbotToolsControllerTests
         Assert.Null(client.LastCall);
     }
 
+    [Fact]
+    public async Task OptimizeRoute_ReturnsTypedOrderedRoute()
+    {
+        var optimizationClient = new StubOptimizationClient();
+        var controller = CreateController(new StubMapboxClient(), optimizationClient);
+
+        var actionResult = await controller.OptimizeRoute(
+            new MapboxOptimizationRequest(
+                "driving",
+                [
+                    new("mapbox.poi.1", "Place 1", 105.81, 21.01),
+                    new("mapbox.poi.2", "Place 2", 105.82, 21.02)
+                ]),
+            CancellationToken.None);
+
+        var result = AssertObjectResult<MapboxOptimizedRouteData>(
+            actionResult,
+            StatusCodes.Status200OK,
+            success: true);
+        var route = Assert.IsType<MapboxOptimizedRouteData>(result.Data);
+        Assert.Equal([1, 2], route.OrderedStops.Select(stop => stop.Order));
+        Assert.Equal([0, 1], route.OrderedStops.Select(stop => stop.InputIndex));
+        Assert.Equal("driving", optimizationClient.Profile);
+    }
+
+    [Fact]
+    public async Task OptimizeRoute_NoRouteReturnsUnprocessableEntity()
+    {
+        var optimizationClient = new StubOptimizationClient
+        {
+            Response = new MapboxRawResponse(
+                200,
+                "{\"code\":\"NoRoute\"}",
+                "application/json")
+        };
+        var controller = CreateController(new StubMapboxClient(), optimizationClient);
+
+        var actionResult = await controller.OptimizeRoute(
+            new MapboxOptimizationRequest(
+                "walking",
+                [
+                    new("mapbox.poi.1", "Place 1", 105.81, 21.01),
+                    new("mapbox.poi.2", "Place 2", 105.82, 21.02)
+                ]),
+            CancellationToken.None);
+
+        var result = AssertObjectResult<MapboxOptimizedRouteData>(
+            actionResult,
+            StatusCodes.Status422UnprocessableEntity,
+            success: false);
+        Assert.Equal("mapbox_no_route", result.ErrorCode);
+    }
+
     [Theory]
     [InlineData("http", StatusCodes.Status502BadGateway, "mapbox_http_error")]
     [InlineData("network", StatusCodes.Status502BadGateway, "mapbox_unavailable")]
@@ -298,20 +353,23 @@ public sealed class ChatbotToolsControllerTests
         return toolResult;
     }
 
-    private static ChatbotToolsController CreateController(StubMapboxClient client) => new(
+    private static ChatbotToolsController CreateController(
+        StubMapboxClient client,
+        StubOptimizationClient? optimizationClient = null) => new(
         new MapboxForwardSearchTool(client),
         new MapboxCategorySearchTool(client),
         new MapboxReverseLookupTool(client),
         new MapboxCandidateResolverTool(
             new MapboxForwardSearchTool(client),
-            new MapboxCategorySearchTool(client)));
+            new MapboxCategorySearchTool(client)),
+        new MapboxPlacesDetailsTool(client),
+        new MapboxOptimizationTool(optimizationClient ?? new StubOptimizationClient()));
 
     private sealed class StubMapboxClient : IMapboxClient
     {
         public string? LastCall { get; private set; }
         public CancellationToken CancellationToken { get; private set; }
         public MapboxForwardSearchRequest? ForwardRequest { get; private set; }
-        public string? Language { get; private set; }
         public string? CategoryId { get; private set; }
         public MapboxCategorySearchRequest? CategoryRequest { get; private set; }
         public MapboxReverseLookupRequest? ReverseRequest { get; private set; }
@@ -324,16 +382,6 @@ public sealed class ChatbotToolsControllerTests
         {
             LastCall = "forward";
             ForwardRequest = request;
-            CancellationToken = cancellationToken;
-            return Complete();
-        }
-
-        public Task<MapboxRawResponse> ListCategoriesAsync(
-            string? language,
-            CancellationToken cancellationToken)
-        {
-            LastCall = "categories";
-            Language = language;
             CancellationToken = cancellationToken;
             return Complete();
         }
@@ -360,9 +408,46 @@ public sealed class ChatbotToolsControllerTests
             return Complete();
         }
 
+        public Task<MapboxRawResponse> RetrievePlacesAsync(
+            IReadOnlyList<string> mapboxIds,
+            CancellationToken cancellationToken)
+        {
+            LastCall = "place-details";
+            CancellationToken = cancellationToken;
+            return Complete();
+        }
+
         private Task<MapboxRawResponse> Complete() => Exception is null
             ? Task.FromResult(Response)
             : Task.FromException<MapboxRawResponse>(Exception);
+    }
+
+    private sealed class StubOptimizationClient : IMapboxOptimizationClient
+    {
+        public string? Profile { get; private set; }
+        public MapboxRawResponse Response { get; set; } = new(
+            200,
+            """
+            {
+              "code":"Ok",
+              "waypoints":[{"waypoint_index":0},{"waypoint_index":1}],
+              "trips":[{
+                "geometry":{"type":"LineString","coordinates":[[105.81,21.01],[105.82,21.02]]},
+                "distance":1000,
+                "duration":600
+              }]
+            }
+            """,
+            "application/json");
+
+        public Task<MapboxRawResponse> OptimizeAsync(
+            string profile,
+            IReadOnlyList<(double Longitude, double Latitude)> coordinates,
+            CancellationToken cancellationToken)
+        {
+            Profile = profile;
+            return Task.FromResult(Response);
+        }
     }
 
     private static readonly MapboxRawResponse PlaceResponse = new(

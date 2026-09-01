@@ -4,10 +4,10 @@ ASP.NET Core backend tách riêng ba vai trò:
 
 - `Mapbox`: chứa `IMapboxClient`, HTTP client, request model và raw response dùng chung.
 - `Chatbot/Tools/Mapbox`: chứa các typed tool handler dành cho chatbot.
-- `Controllers`: cung cấp HTTP API cho frontend và trả nguyên response của Mapbox.
+- `Controllers`: cung cấp HTTP API cho Django chatbot.
 
-Controller và chatbot tool đều gọi `IMapboxClient`. Tool không gọi vòng qua controller,
-không tự dựng URL và không nhận Mapbox access token từ người dùng.
+Controller gọi các typed chatbot tool; tool gọi `IMapboxClient`, không tự dựng URL và
+không nhận Mapbox access token từ người dùng.
 
 ## Chatbot tools
 
@@ -42,38 +42,17 @@ Các mã lỗi tool:
 - `mapbox_unavailable`
 - `mapbox_invalid_response`
 
-Backend cung cấp endpoint:
+Backend cung cấp các endpoint nội bộ cho Django:
 
 ```http
-GET /api/mapbox/search?q=Eiffel%20Tower&language=en&limit=5&types=poi
+POST /api/chatbot/tools/mapbox-forward-search
+POST /api/chatbot/tools/mapbox-category-search
+POST /api/chatbot/tools/mapbox-reverse-lookup
+POST /api/chatbot/tools/mapbox-resolve-candidates
 ```
 
-Endpoint gọi Mapbox Search Box Text Search `/forward` và trả nguyên GeoJSON. Backend không triển khai
-`/suggest` hoặc `/retrieve`, đồng thời không nhận `access_token` từ client.
-
-Danh sách category Mapbox có endpoint riêng:
-
-```http
-GET /api/mapbox/categories?language=en
-```
-
-Endpoint này gọi Mapbox `/list/category` và trả nguyên danh sách gồm canonical ID, icon và tên category.
-
-Dùng `canonical_id` từ Category List để tìm các POI thuộc category:
-
-```http
-GET /api/mapbox/categories/restaurant?language=en&limit=10&proximity=2.2945,48.8584
-```
-
-Category Search gọi Mapbox `/category/{canonical_category_id}` và trả nguyên GeoJSON `FeatureCollection`.
-
-Tra cứu địa điểm và POI quanh một tọa độ:
-
-```http
-GET /api/mapbox/reverse?longitude=2.2945&latitude=48.8584&language=en&limit=5
-```
-
-Reverse Lookup gọi Mapbox `/reverse` và trả nguyên GeoJSON `FeatureCollection`.
+Các endpoint này trả `ToolResult<T>` đã được chuẩn hóa cho Django; access token chỉ nằm
+ở backend .NET.
 
 ## Cấu hình token
 
@@ -84,6 +63,15 @@ dotnet user-secrets set "Mapbox:AccessToken" "YOUR_MAPBOX_ACCESS_TOKEN"
 ```
 
 Hoặc cấu hình biến môi trường `Mapbox__AccessToken`.
+
+Gemini Live cần API key ở .NET User Secrets, không đưa key này vào frontend:
+
+```powershell
+dotnet user-secrets set "GeminiLive:ApiKey" "YOUR_GEMINI_API_KEY"
+```
+
+Endpoint `POST /api/speech/ephemeral-token` chỉ cấp token ngắn hạn, một lần dùng,
+đã khóa cho model `gemini-3.5-transcribe-live`, TEXT-only, SMART `vi-VN` và manual VAD.
 
 ## Chạy và kiểm thử
 
@@ -98,8 +86,6 @@ http://localhost:5257/swagger
 ```
 
 OpenAPI JSON nằm tại `http://localhost:5257/swagger/v1/swagger.json`.
-
-Request mẫu đầy đủ hơn nằm trong `backend/backend/backend.http`.
 
 ```powershell
 dotnet test backend.slnx

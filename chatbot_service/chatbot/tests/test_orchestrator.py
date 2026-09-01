@@ -9,6 +9,7 @@ from django.test import SimpleTestCase
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from chatbot.intent import TravelIntent
+from chatbot.itinerary_making import ItineraryCandidate, ItineraryCandidatePlan
 from chatbot.orchestrator import (
     ChatOrchestrator,
     NO_TOOL_CONTEXT,
@@ -18,6 +19,7 @@ from chatbot.orchestrator import (
 )
 from chatbot.response_policy import (
     DESTINATION_DISCOVERY_POLICY,
+    ITINERARY_MAKING_POLICY,
     MAPBOX_FIRST_POLICY,
     RAG_FIRST_ADVICE_POLICY,
 )
@@ -29,14 +31,257 @@ from chatbot.semantic import (
     SemanticEntities,
     SemanticInterpretation,
     SemanticLocation,
+    SemanticTimeContext,
     TravelDomain,
 )
 from chatbot.tool_planner import PlannedToolCall
-from chatbot.tools.models import KnowledgeBaseSource, MapboxSource
+from chatbot.tools.models import (
+    ChatPlace,
+    KnowledgeBaseSource,
+    MapboxPlaceDetailsItem,
+    MapboxPlacePhoto,
+    MapboxPlacesDetailsData,
+    MapboxSource,
+    ToolResult,
+)
 from chatbot.tools.registry import ToolExecution
 
 
 class ChatOrchestratorTests(SimpleTestCase):
+    def test_itinerary_making_uses_registry_optimizer_once(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.ITINERARY_MAKING,
+            actions=[SemanticActionType.MAKE_ITINERARY],
+            entities=SemanticEntities(destinations=["Hà Nội"]),
+            normalized_query="Lên lịch trình Hà Nội 3 ngày 2 đêm",
+        ).model_copy(update={
+            "time_context": SemanticTimeContext(
+                duration_days=3,
+                duration_nights=2,
+            )
+        })
+        registry = StubRegistry(executions={
+            "search_travel_knowledge": tool_execution({"chunks": [], "sources": []}),
+            "mapbox_forward_search": tool_execution({
+                "attribution": "Mapbox",
+                "results": [{
+                    "mapboxId": "city-hanoi",
+                    "name": "Hà Nội",
+                    "longitude": 105.84,
+                    "latitude": 21.03,
+                }],
+            }),
+            "mapbox_resolve_candidates": tool_execution({
+                "attribution": "Mapbox",
+                "results": [
+                    {"candidateId": "candidate-1", "status": "matched", "place": mapbox_place("poi-1", "Điểm A", 105.8, 21.0)},
+                    {"candidateId": "candidate-2", "status": "matched", "place": mapbox_place("poi-2", "Điểm B", 105.9, 21.1)},
+                ],
+                "additionalPlaces": [],
+            }),
+            "create_itinerary": tool_execution({
+                "id": "507f1f77bcf86cd799439011",
+                "userId": "admin",
+                "version": 1,
+                "title": "Hà Nội 3 ngày 2 đêm",
+                "destination": "Hà Nội",
+                "durationDays": 3,
+                "durationNights": 2,
+                "profile": "driving",
+                "stops": [
+                    {"id": "507f1f77bcf86cd799439012", "order": 1, "inputIndex": 1, "mapboxId": "poi-2", "name": "Điểm B", "longitude": 105.9, "latitude": 21.1},
+                    {"id": "507f1f77bcf86cd799439013", "order": 2, "inputIndex": 0, "mapboxId": "poi-1", "name": "Điểm A", "longitude": 105.8, "latitude": 21.0},
+                ],
+                "route": {"type": "LineString", "coordinates": [[105.9, 21.1], [105.8, 21.0]]},
+                "distanceMeters": 2500,
+                "durationSeconds": 900,
+                "provider": "mapbox",
+                "generatedAt": "2026-08-28T10:00:00Z",
+                "createdAt": "2026-08-28T10:00:00Z",
+                "updatedAt": "2026-08-28T10:00:00Z",
+            }),
+        })
+        candidate_generator = StaticItineraryCandidateGenerator(
+            ItineraryCandidatePlan(
+                title="Hà Nội 3 ngày 2 đêm",
+                destination="Hà Nội",
+                candidates=[
+                    ItineraryCandidate(name="Điểm A", reason="Lý do A"),
+                    ItineraryCandidate(name="Điểm B", reason="Lý do B"),
+                ],
+            )
+        )
+        model = StubChatModel([AIMessage(content="Điểm B rồi Điểm A.")])
+
+        result = ChatOrchestrator(
+            model,
+            registry,
+            semantic_interpreter=StubInterpreter(interpretation),
+            itinerary_candidate_generator=candidate_generator,
+            max_tool_calls=6,
+        ).answer("Lên lịch trình Hà Nội 3 ngày 2 đêm")
+
+        self.assertIsNotNone(result.itinerary)
+        self.assertEqual(
+            [stop.name for stop in result.itinerary.stops],
+            ["Điểm B", "Điểm A"],
+        )
+        self.assertEqual(
+            [name for name, _ in registry.calls].count("create_itinerary"),
+            1,
+        )
+        self.assertEqual(result.itinerary.id, "507f1f77bcf86cd799439011")
+        self.assertEqual(result.itinerary.version, 1)
+        self.assertIn(ITINERARY_MAKING_POLICY.strip(), model.invocations[0][0].content)
+        self.assertIn('"success": true', model.invocations[0][0].content)
+        self.assertIn('"route"', model.invocations[0][0].content)
+
+    def test_enrich_answer_places_calls_one_batch_and_merges_details(self):
+        cafe_id = "dXJuOm1ieHBvaTpjYWZlLWV4YW1wbGU"
+        missing_id = "dXJuOm1ieHBvaTptaXNzaW5n"
+        captured_ids = []
+
+        def load_details(request):
+            captured_ids.append(request.ids)
+            return ToolResult[
+                MapboxPlacesDetailsData
+            ].model_validate({
+                "success": True,
+                "data": MapboxPlacesDetailsData(
+                    results=[
+                        MapboxPlaceDetailsItem(
+                            mapboxId=cafe_id,
+                            name="Cafe Example",
+                            fullAddress="1 Example Street",
+                            primaryCategory="cafe",
+                            categories=["cafe"],
+                            openingHours="Mo-Su 07:00-22:00",
+                            permanentlyClosed=False,
+                            phone="+84123456789",
+                            website="https://example.test",
+                            status="active",
+                            longitude=105.8,
+                            latitude=21.0,
+                            popularity=0.9,
+                            photos=[MapboxPlacePhoto(
+                                url="https://images.example.test/place.jpg"
+                            )],
+                        )
+                    ]
+                ),
+            })
+
+        orchestrator = ChatOrchestrator(
+            StubChatModel([]),
+            StubRegistry(),
+            semantic_interpreter=StubInterpreter(None),
+            place_details_loader=load_details,
+        )
+        places = orchestrator._enrich_answer_places([
+            ChatPlace(
+                mapboxId=cafe_id,
+                name="Cafe Example",
+                longitude=105.8,
+                latitude=21.0,
+            ),
+            ChatPlace(
+                mapboxId=missing_id,
+                name="Missing Place",
+                longitude=105.9,
+                latitude=21.1,
+            ),
+        ])
+
+        self.assertEqual(captured_ids, [[cafe_id, missing_id]])
+        self.assertEqual(places[0].opening_hours, "Mo-Su 07:00-22:00")
+        self.assertEqual(places[0].photos[0].source, None)
+        self.assertIsNone(places[1].opening_hours)
+
+    def test_enrich_answer_places_excludes_non_poi_ids_from_batch(self):
+        poi_id = "dXJuOm1ieHBvaTpjYWZlLWV4YW1wbGU"
+        city_id = "dXJuOm1ieHBsYzpSUFE"
+        captured_ids = []
+
+        def load_details(request):
+            captured_ids.append(request.ids)
+            return ToolResult[MapboxPlacesDetailsData].model_validate({
+                "success": True,
+                "data": {"results": []},
+            })
+
+        orchestrator = ChatOrchestrator(
+            StubChatModel([]),
+            StubRegistry(),
+            semantic_interpreter=StubInterpreter(None),
+            place_details_loader=load_details,
+        )
+        places = [
+            ChatPlace(
+                mapboxId=poi_id,
+                name="Cafe Example",
+                longitude=105.8,
+                latitude=21.0,
+            ),
+            ChatPlace(
+                mapboxId=city_id,
+                name="New York",
+                longitude=-74.006,
+                latitude=40.7128,
+            ),
+        ]
+
+        enriched = orchestrator._enrich_answer_places(places)
+
+        self.assertEqual(captured_ids, [[poi_id]])
+        self.assertEqual(enriched, places)
+
+    def test_enrich_answer_places_skips_batch_when_no_poi_ids_exist(self):
+        loader_called = False
+
+        def load_details(_request):
+            nonlocal loader_called
+            loader_called = True
+            raise AssertionError("Places Details should not be called")
+
+        orchestrator = ChatOrchestrator(
+            StubChatModel([]),
+            StubRegistry(),
+            semantic_interpreter=StubInterpreter(None),
+            place_details_loader=load_details,
+        )
+        places = [ChatPlace(
+            mapboxId="dXJuOm1ieHBsYzpSUFE",
+            name="New York",
+            longitude=-74.006,
+            latitude=40.7128,
+        )]
+
+        enriched = orchestrator._enrich_answer_places(places)
+
+        self.assertFalse(loader_called)
+        self.assertEqual(enriched, places)
+
+    def test_destination_coordinates_ignore_fuzzy_result_with_wrong_name(self):
+        execution = ToolExecution(
+            content=(
+                '{"success":true,"data":{"results":['
+                '{"name":"Cửa Hàng Đá Ốp Lát","longitude":105.79,"latitude":21.04},'
+                '{"name":"Đà Lạt","longitude":108.45,"latitude":11.94}'
+                ']}}'
+            ),
+            sources=(),
+            success=True,
+            system_failure=False,
+        )
+
+        self.assertEqual(
+            ChatOrchestrator._first_result_coordinates(
+                execution,
+                destination="Đà Lạt",
+            ),
+            (108.45, 11.94),
+        )
+
     def test_model_request_log_redacts_current_location_coordinates(self):
         terminal_output = StringIO()
 
@@ -111,6 +356,7 @@ class ChatOrchestratorTests(SimpleTestCase):
             registry,
             semantic_interpreter=semantic_interpreter_mock.return_value,
             candidate_generator=candidate_generator_mock.return_value,
+            itinerary_candidate_generator=None,
             max_tool_calls=None,
         )
 
@@ -155,7 +401,10 @@ class ChatOrchestratorTests(SimpleTestCase):
         )
 
         self.assertEqual(
-            [place.model_dump(by_alias=True) for place in places],
+            [
+                place.model_dump(by_alias=True, exclude_none=True, exclude_defaults=True)
+                for place in places
+            ],
             [
                 {
                     "mapboxId": "mapbox.ho",
@@ -228,6 +477,7 @@ class ChatOrchestratorTests(SimpleTestCase):
             entities=SemanticEntities(destinations=["Hà Nội"]),
         )
         mapbox_source = MapboxSource(attribution="Mapbox")
+        category_mapbox_source = MapboxSource(attribution="© Mapbox")
         registry = StubRegistry(
             {
                 "mapbox_forward_search": mapbox_place_execution(
@@ -236,7 +486,7 @@ class ChatOrchestratorTests(SimpleTestCase):
                     mapbox_source,
                 ),
             },
-            default_execution=successful_execution(mapbox_source),
+            default_execution=successful_execution(category_mapbox_source),
         )
         model = StubChatModel([AIMessage(content="Đã tìm thấy địa điểm phù hợp.")])
 
@@ -691,6 +941,44 @@ class StubInterpreter:
     def interpret(self, question, *, history=(), current_location=None):
         self.calls.append((question, history, current_location))
         return self.interpretation
+
+
+class StaticItineraryCandidateGenerator:
+    def __init__(self, result):
+        self.result = result
+
+    def generate(self, *args, **kwargs):
+        return self.result
+
+
+def tool_execution(data):
+    return ToolExecution(
+        content=json.dumps(
+            {"success": True, "data": data},
+            ensure_ascii=False,
+        ),
+        sources=(),
+        success=True,
+        system_failure=False,
+    )
+
+
+def mapbox_place(mapbox_id, name, longitude, latitude):
+    return {
+        "mapboxId": mapbox_id,
+        "name": name,
+        "featureType": "poi",
+        "fullAddress": None,
+        "longitude": longitude,
+        "latitude": latitude,
+        "poiCategories": [],
+        "poiCategoryIds": [],
+        "operationalStatus": None,
+        "distanceMeters": None,
+        "etaMinutes": None,
+        "rating": None,
+        "popularity": None,
+    }
 
 
 class StubRegistry:

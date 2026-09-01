@@ -18,6 +18,43 @@ from chatbot.tool_planner import plan_tools
 
 
 class ToolPlannerTests(SimpleTestCase):
+    def test_itinerary_making_reuses_existing_discovery_without_route_tool(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.ITINERARY_MAKING,
+            actions=[
+                SemanticActionType.DISCOVER_PLACES,
+                SemanticActionType.MAKE_ITINERARY,
+            ],
+            domains=[TravelDomain.ATTRACTION],
+            entities=SemanticEntities(
+                destinations=["Hà Nội"],
+                place_types=["địa điểm vui chơi"],
+            ),
+        )
+
+        calls = plan_tools(interpretation, max_categories=1)
+
+        self.assertEqual(
+            [call.name for call in calls],
+            [
+                "mapbox_forward_search",
+                "search_travel_knowledge",
+                "mapbox_category_search",
+            ],
+        )
+        self.assertEqual(calls[0].arguments["types"], "city,place")
+        self.assertNotIn("mapbox_optimize_route", [call.name for call in calls])
+
+    def test_incomplete_itinerary_making_uses_no_tools(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.ITINERARY_MAKING,
+            actions=[SemanticActionType.REQUEST_CLARIFICATION],
+            status=InterpretationStatus.NEEDS_CLARIFICATION,
+            missing_information=["destination"],
+        )
+
+        self.assertEqual(plan_tools(interpretation), ())
+
     def test_travel_qa_uses_only_knowledge_base(self):
         interpretation = build_interpretation(
             intent=TravelIntent.TRAVEL_QA,
@@ -113,6 +150,35 @@ class ToolPlannerTests(SimpleTestCase):
                 "rank_strategy": "relevance",
             },
         )
+
+    def test_place_details_city_falls_back_to_destination_forward_search(self):
+        interpretation = build_interpretation(
+            intent=TravelIntent.PLACE_DETAILS,
+            actions=[SemanticActionType.ANSWER_TRAVEL_QUESTION],
+            entities=SemanticEntities(
+                destinations=["Đà Lạt"],
+                search_target=SearchTargetType.CITY,
+            ),
+        )
+
+        calls = plan_tools(interpretation)
+
+        self.assertEqual(
+            [call.name for call in calls],
+            ["search_travel_knowledge", "mapbox_forward_search"],
+        )
+        self.assertEqual(
+            calls[1].arguments,
+            {
+                "q": "Đà Lạt",
+                "language": "vi",
+                "limit": 5,
+                "types": "city",
+                "rank_strategy": "relevance",
+                "auto_complete": False,
+            },
+        )
+        self.assertEqual(calls[1].evidence_kind, "destination_location")
 
     def test_named_poi_uses_explicit_distance_and_rating(self):
         interpretation = build_interpretation(

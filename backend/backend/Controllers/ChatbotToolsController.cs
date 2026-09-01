@@ -11,7 +11,9 @@ public sealed class ChatbotToolsController(
     MapboxForwardSearchTool forwardSearchTool,
     MapboxCategorySearchTool categorySearchTool,
     MapboxReverseLookupTool reverseLookupTool,
-    MapboxCandidateResolverTool candidateResolverTool) : ControllerBase
+    MapboxCandidateResolverTool candidateResolverTool,
+    MapboxPlacesDetailsTool placesDetailsTool,
+    MapboxOptimizationTool optimizationTool) : ControllerBase
 {
     [HttpPost("mapbox-forward-search")]
     [ProducesResponseType<ToolResult<MapboxPlaceSummaryData>>(StatusCodes.Status200OK)]
@@ -75,6 +77,33 @@ public sealed class ChatbotToolsController(
         return ToActionResult(result);
     }
 
+    [HttpPost("mapbox-place-details-batch")]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxPlacesDetailsData>>(StatusCodes.Status504GatewayTimeout)]
+    public async Task<IActionResult> RetrievePlaceDetails(
+        [FromBody] MapboxPlacesDetailsHttpRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await placesDetailsTool.ExecuteAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("mapbox-optimize-route")]
+    [ProducesResponseType<ToolResult<MapboxOptimizedRouteData>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ToolResult<MapboxOptimizedRouteData>>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ToolResult<MapboxOptimizedRouteData>>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ToolResult<MapboxOptimizedRouteData>>(StatusCodes.Status502BadGateway)]
+    [ProducesResponseType<ToolResult<MapboxOptimizedRouteData>>(StatusCodes.Status504GatewayTimeout)]
+    public async Task<IActionResult> OptimizeRoute(
+        [FromBody] MapboxOptimizationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await optimizationTool.ExecuteAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
     private ObjectResult ToActionResult<T>(ToolResult<T> result) where T : class
     {
         var statusCode = result.Success
@@ -82,6 +111,10 @@ public sealed class ChatbotToolsController(
             : result.ErrorCode switch
             {
                 "invalid_input" => StatusCodes.Status400BadRequest,
+                "mapbox_no_route" or
+                "mapbox_no_trips" or
+                "mapbox_no_segment" or
+                "mapbox_not_implemented" => StatusCodes.Status422UnprocessableEntity,
                 "mapbox_timeout" => StatusCodes.Status504GatewayTimeout,
                 _ => StatusCodes.Status502BadGateway
             };

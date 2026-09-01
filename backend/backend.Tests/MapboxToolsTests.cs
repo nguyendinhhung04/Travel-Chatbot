@@ -97,6 +97,55 @@ public sealed class MapboxToolsTests
     }
 
     [Fact]
+    public async Task PlacesDetailsTool_MapsBatchDetailsAndPhotos()
+    {
+        var client = new StubMapboxClient
+        {
+            Response = JsonResponse("""
+                {
+                  "results": [{
+                    "mapbox_id": "mapbox.poi.1",
+                    "name": "Cafe Example",
+                    "full_address": "1 Example Street",
+                    "primary_category": "cafe",
+                    "categories": ["cafe", "food_and_drink"],
+                    "opening_hours": "Mo-Su 07:00-22:00",
+                    "permanently_closed": false,
+                    "phone": "+84123456789",
+                    "website": "https://example.test",
+                    "status": "active",
+                    "score": { "popularity": 0.91 },
+                    "coordinates": { "longitude": 105.8, "latitude": 21.0 },
+                    "photos": [{
+                      "url": "https://images.example.test/place.jpg",
+                      "width": 1200,
+                      "height": 800,
+                      "source": "web"
+                    }]
+                  }],
+                  "missing": ["mapbox.poi.missing"]
+                }
+                """)
+        };
+
+        var result = await new MapboxPlacesDetailsTool(client).ExecuteAsync(
+            new MapboxPlacesDetailsHttpRequest
+            {
+                Ids = ["mapbox.poi.1", "mapbox.poi.missing"]
+            });
+
+        Assert.True(result.Success);
+        var data = Assert.IsType<MapboxPlacesDetailsData>(result.Data);
+        var place = Assert.Single(data.Results);
+        Assert.Equal("Cafe Example", place.Name);
+        Assert.Equal("Mo-Su 07:00-22:00", place.OpeningHours);
+        Assert.Equal(0.91, place.Popularity);
+        Assert.Equal("https://images.example.test/place.jpg", Assert.Single(place.Photos).Url);
+        Assert.Equal(["mapbox.poi.missing"], data.Missing);
+        Assert.Empty(data.Unprocessed);
+    }
+
+    [Fact]
     public async Task CategorySearchTool_ForwardsCategoryAndCompleteRequest()
     {
         var client = new StubMapboxClient { Response = JsonResponse(MinimalPlaceResponse) };
@@ -330,7 +379,6 @@ public sealed class MapboxToolsTests
     {
         public int CallCount { get; private set; }
         public MapboxForwardSearchRequest? ForwardRequest { get; private set; }
-        public string? Language { get; private set; }
         public string? CategoryId { get; private set; }
         public MapboxCategorySearchRequest? CategoryRequest { get; private set; }
         public MapboxReverseLookupRequest? ReverseRequest { get; private set; }
@@ -342,14 +390,6 @@ public sealed class MapboxToolsTests
             CancellationToken cancellationToken)
         {
             ForwardRequest = request;
-            return Complete();
-        }
-
-        public Task<MapboxRawResponse> ListCategoriesAsync(
-            string? language,
-            CancellationToken cancellationToken)
-        {
-            Language = language;
             return Complete();
         }
 
@@ -370,6 +410,10 @@ public sealed class MapboxToolsTests
             ReverseRequest = request;
             return Complete();
         }
+
+        public Task<MapboxRawResponse> RetrievePlacesAsync(
+            IReadOnlyList<string> mapboxIds,
+            CancellationToken cancellationToken) => Complete();
 
         private Task<MapboxRawResponse> Complete()
         {

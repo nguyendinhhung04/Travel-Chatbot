@@ -10,11 +10,19 @@ from django.conf import settings
 from pydantic import TypeAdapter, ValidationError
 
 from .models import (
+    ItineraryAddStopInput,
+    ItineraryCreateInput,
+    ItineraryData,
+    ItineraryGetInput,
     MapboxCategorySearchInput,
     MapboxCandidateResolutionData,
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
+    MapboxOptimizeRouteInput,
+    MapboxOptimizedRouteData,
     MapboxPlaceSummaryData,
+    MapboxPlacesDetailsData,
+    MapboxPlacesDetailsInput,
     MapboxReverseLookupInput,
     ToolResult,
 )
@@ -28,6 +36,9 @@ TOOL_INVALID_RESPONSE_ERROR = "tool_invalid_response"
 
 _PLACE_SUMMARY_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlaceSummaryData])
 _CANDIDATE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxCandidateResolutionData])
+_PLACE_DETAILS_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxPlacesDetailsData])
+_OPTIMIZED_ROUTE_RESULT_ADAPTER = TypeAdapter(ToolResult[MapboxOptimizedRouteData])
+_ITINERARY_ADAPTER = TypeAdapter(ItineraryData)
 _ResultData = TypeVar("_ResultData")
 
 
@@ -92,6 +103,58 @@ class MapboxToolClient:
             _CANDIDATE_RESULT_ADAPTER,
         )
 
+    def retrieve_place_details(
+        self,
+        request: MapboxPlacesDetailsInput,
+    ) -> ToolResult[MapboxPlacesDetailsData]:
+        return self._post(
+            "/api/chatbot/tools/mapbox-place-details-batch",
+            request.model_dump(mode="json"),
+            _PLACE_DETAILS_RESULT_ADAPTER,
+        )
+
+    def optimize_route(
+        self,
+        request: MapboxOptimizeRouteInput,
+    ) -> ToolResult[MapboxOptimizedRouteData]:
+        return self._post(
+            "/api/chatbot/tools/mapbox-optimize-route",
+            request.model_dump(mode="json", by_alias=True),
+            _OPTIMIZED_ROUTE_RESULT_ADAPTER,
+        )
+
+    def get_itinerary(self, request: ItineraryGetInput) -> ToolResult[ItineraryData]:
+        endpoint = (
+            f"/api/users/admin/itineraries/{request.itinerary_id}"
+            if request.itinerary_id
+            else "/api/users/admin/itineraries/latest"
+        )
+        return self._itinerary_request("GET", endpoint)
+
+    def create_itinerary(
+        self,
+        request: ItineraryCreateInput,
+    ) -> ToolResult[ItineraryData]:
+        return self._itinerary_request(
+            "POST",
+            "/api/users/admin/itineraries",
+            request.model_dump(mode="json", by_alias=True),
+        )
+
+    def add_itinerary_stop(
+        self,
+        request: ItineraryAddStopInput,
+    ) -> ToolResult[ItineraryData]:
+        return self._itinerary_request(
+            "POST",
+            f"/api/users/admin/itineraries/{request.itinerary_id}/stops",
+            {
+                "stop": request.stop.model_dump(mode="json", by_alias=True),
+                "expectedVersion": request.expected_version,
+                "position": request.position,
+            },
+        )
+
     def close(self) -> None:
         if self._owns_http_client:
             self._http_client.close()
@@ -147,6 +210,66 @@ class MapboxToolClient:
                 TOOL_INVALID_RESPONSE_ERROR,
                 "Dịch vụ Mapbox tool trả về dữ liệu không hợp lệ.",
             )
+
+    def _itinerary_request(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict[str, Any] | None = None,
+    ) -> ToolResult[ItineraryData]:
+        try:
+            response = self._http_client.request(
+                method,
+                f"{self._base_url}{endpoint}",
+                json=payload,
+                headers={"Accept": "application/json"},
+                timeout=self._timeout_seconds,
+            )
+        except httpx.TimeoutException:
+            return self._failure(
+                TOOL_TIMEOUT_ERROR,
+                "Dịch vụ lịch trình hết thời gian phản hồi.",
+            )
+        except httpx.RequestError:
+            return self._failure(
+                TOOL_UNAVAILABLE_ERROR,
+                "Không thể kết nối đến dịch vụ lịch trình.",
+            )
+
+        try:
+            body = response.json()
+        except ValueError:
+            return self._failure(
+                TOOL_INVALID_RESPONSE_ERROR,
+                "Dịch vụ lịch trình trả về dữ liệu không hợp lệ.",
+            )
+        if response.is_success:
+            try:
+                return ToolResult[ItineraryData](
+                    success=True,
+                    data=_ITINERARY_ADAPTER.validate_python(body),
+                )
+            except ValidationError:
+                return self._failure(
+                    TOOL_INVALID_RESPONSE_ERROR,
+                    "Dịch vụ lịch trình trả về dữ liệu không hợp lệ.",
+                )
+
+        error_code = (
+            body.get("errorCode")
+            if isinstance(body, dict) and isinstance(body.get("errorCode"), str)
+            else "itinerary_http_error"
+        )
+        error_message = (
+            body.get("error")
+            if isinstance(body, dict) and isinstance(body.get("error"), str)
+            else "Yêu cầu lịch trình không thành công."
+        )
+        return ToolResult[ItineraryData](
+            success=False,
+            error_code=error_code,
+            error_message=error_message,
+        )
 
     @staticmethod
     def _failure(

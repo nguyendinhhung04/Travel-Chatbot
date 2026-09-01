@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.exceptions import OutputParserException
 from pydantic import ValidationError
 
 from chatbot.intent import TravelIntent
@@ -19,6 +20,7 @@ from chatbot.semantic import (
     SemanticActionType,
     SemanticInterpretation,
     SemanticInterpreter,
+    SemanticItineraryContext,
     SemanticLocation,
     SearchTargetType,
     TravelDomain,
@@ -132,6 +134,112 @@ class SemanticModelTests(SimpleTestCase):
         )
         self.assertTrue(interpretation.location.use_current_location)
 
+    def test_itinerary_making_requires_and_owns_make_itinerary_action(self):
+        base = build_interpretation().model_dump(mode="json")
+
+        valid = SemanticInterpretation.model_validate(
+            {
+                **base,
+                "primary_intent": "itinerary_making",
+                "actions": [
+                    {"type": "discover_places"},
+                    {"type": "make_itinerary"},
+                ],
+            }
+        )
+
+        self.assertEqual(valid.primary_intent, TravelIntent.ITINERARY_MAKING)
+        self.assertEqual(
+            [action.type for action in valid.actions],
+            [
+                SemanticActionType.DISCOVER_PLACES,
+                SemanticActionType.MAKE_ITINERARY,
+            ],
+        )
+
+        invalid_values = (
+            {
+                **base,
+                "primary_intent": "itinerary_making",
+                "actions": [{"type": "discover_places"}],
+            },
+            {
+                **base,
+                "primary_intent": "place_search",
+                "actions": [{"type": "make_itinerary"}],
+            },
+            {
+                **base,
+                "primary_intent": "travel_qa",
+                "actions": [{"type": "make_itinerary"}],
+            },
+        )
+        for values in invalid_values:
+            with self.subTest(intent=values["primary_intent"]):
+                with self.assertRaises(ValidationError):
+                    SemanticInterpretation.model_validate(values)
+
+    def test_incomplete_itinerary_making_can_request_clarification(self):
+        interpretation = SemanticInterpretation.model_validate(
+            {
+                **build_interpretation().model_dump(mode="json"),
+                "primary_intent": "itinerary_making",
+                "actions": [{"type": "request_clarification"}],
+                "missing_information": ["destination"],
+                "status": "needs_clarification",
+            }
+        )
+
+        self.assertEqual(
+            interpretation.primary_intent,
+            TravelIntent.ITINERARY_MAKING,
+        )
+        self.assertEqual(
+            interpretation.actions[0].type,
+            SemanticActionType.REQUEST_CLARIFICATION,
+        )
+
+    def test_itinerary_management_actions_require_management_intent(self):
+        base = build_interpretation().model_dump(mode="json")
+        interpretation = SemanticInterpretation.model_validate(
+            {
+                **base,
+                "primary_intent": "itinerary_management",
+                "entities": {
+                    "places": ["Công viên Yên Sở"],
+                    "search_target": "poi",
+                },
+                "actions": [
+                    {"type": "find_named_place"},
+                    {"type": "add_itinerary_stop"},
+                ],
+            }
+        )
+
+        self.assertEqual(
+            interpretation.primary_intent,
+            TravelIntent.ITINERARY_MANAGEMENT,
+        )
+        self.assertEqual(
+            interpretation.actions[-1].type,
+            SemanticActionType.ADD_ITINERARY_STOP,
+        )
+        self.assertEqual(
+            interpretation.itinerary_context,
+            SemanticItineraryContext(),
+        )
+
+        for invalid_intent in ("context_follow_up", "itinerary_making"):
+            with self.subTest(intent=invalid_intent):
+                with self.assertRaises(ValidationError):
+                    SemanticInterpretation.model_validate(
+                        {
+                            **base,
+                            "primary_intent": invalid_intent,
+                            "actions": [{"type": "add_itinerary_stop"}],
+                        }
+                    )
+
 
 class SemanticInterpreterTests(SimpleTestCase):
     def test_interpreter_logs_validated_response_and_redacts_current_location(self):
@@ -209,6 +317,51 @@ class SemanticInterpreterTests(SimpleTestCase):
         self.assertEqual(payload["history"][0]["role"], "user")
         self.assertEqual(payload["current_location"]["longitude"], 108.2)
 
+    def test_interpreter_forwards_active_itinerary_id_as_structured_context(self):
+        model = StubChatModel(build_interpretation())
+
+        SemanticInterpreter(model).interpret(
+            "Thêm Công viên Yên Sở vào lịch trình",
+            active_itinerary_id="507f1f77bcf86cd799439011",
+        )
+
+        payload = json.loads(model.structured.invocations[0][1].content)
+        self.assertEqual(
+            payload["active_itinerary_id"],
+            "507f1f77bcf86cd799439011",
+        )
+
+    def test_interpreter_retries_one_invalid_cross_field_response(self):
+        valid = SemanticInterpretation.model_validate(
+            {
+                **build_interpretation().model_dump(mode="json"),
+                "primary_intent": "itinerary_management",
+                "normalized_query": "Thêm Công viên Yên Sở vào lịch trình",
+                "entities": {
+                    "places": ["Công viên Yên Sở"],
+                    "search_target": "poi",
+                },
+                "actions": [
+                    {"type": "find_named_place"},
+                    {"type": "add_itinerary_stop"},
+                ],
+            }
+        )
+        model = StubChatModel(
+            [OutputParserException("invalid intent/action pair"), valid]
+        )
+
+        result = SemanticInterpreter(model).interpret(
+            "Thêm Công viên Yên Sở vào lịch trình"
+        )
+
+        self.assertEqual(result.primary_intent, TravelIntent.ITINERARY_MANAGEMENT)
+        self.assertEqual(len(model.structured.invocations), 2)
+        self.assertIn(
+            "itinerary_management",
+            model.structured.invocations[1][-1].content,
+        )
+
     def test_interpreter_rejects_empty_questions_and_excessive_history(self):
         model = StubChatModel(build_interpretation())
         interpreter = SemanticInterpreter(model)
@@ -256,7 +409,16 @@ class SemanticInterpreterTests(SimpleTestCase):
         )
         self.assertIn("không tạo tên tool", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("canonicalId", SEMANTIC_SYSTEM_PROMPT)
-        self.assertIn("Lịch trình chỉ là tư vấn văn bản", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Dùng itinerary_making", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Dùng itinerary_advice", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Dùng itinerary_management", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Intent nghiệp vụ này ưu tiên hơn context_follow_up", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("Công viên Yên Sở", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn('"các địa điểm chơi tại Hà Nội"', SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("phải itinerary_making", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("không được thêm make_itinerary", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("không tự đoán điểm đến", SEMANTIC_SYSTEM_PROMPT)
+        self.assertIn("semantic không tự tạo geometry", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("giao thông thời gian thực", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("needs_clarification", SEMANTIC_SYSTEM_PROMPT)
         self.assertIn("entities.search_target", SEMANTIC_SYSTEM_PROMPT)
@@ -281,7 +443,10 @@ class StubStructuredModel:
 
     def invoke(self, messages):
         self.invocations.append(list(messages))
-        return self.response
+        response = self.response.pop(0) if isinstance(self.response, list) else self.response
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class StubChatModel:

@@ -62,6 +62,33 @@ export async function POST(request: Request) {
   }
   const history = (historyValue ?? []) as HistoryMessage[];
 
+  const activeItineraryId =
+    typeof body === "object" && body !== null && "active_itinerary_id" in body
+      ? (body as { active_itinerary_id?: unknown }).active_itinerary_id
+      : undefined;
+  if (
+    activeItineraryId !== undefined &&
+    (typeof activeItineraryId !== "string" || !/^[a-f\d]{24}$/i.test(activeItineraryId))
+  ) {
+    return errorResponse("Mã lịch trình không hợp lệ.", 400);
+  }
+
+  const activeItineraryVersion =
+    typeof body === "object" && body !== null && "active_itinerary_version" in body
+      ? (body as { active_itinerary_version?: unknown }).active_itinerary_version
+      : undefined;
+  if (
+    activeItineraryVersion !== undefined &&
+    (typeof activeItineraryVersion !== "number" ||
+      !Number.isInteger(activeItineraryVersion) ||
+      activeItineraryVersion < 1)
+  ) {
+    return errorResponse("Phiên bản lịch trình không hợp lệ.", 400);
+  }
+  if ((activeItineraryId === undefined) !== (activeItineraryVersion === undefined)) {
+    return errorResponse("Mã và phiên bản lịch trình phải được gửi cùng nhau.", 400);
+  }
+
   const currentLocation =
     typeof body === "object" && body !== null && "current_location" in body
       ? (body as { current_location?: unknown }).current_location
@@ -104,6 +131,12 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         message: message.trim(),
         history,
+        ...(activeItineraryId === undefined
+          ? {}
+          : { active_itinerary_id: activeItineraryId }),
+        ...(activeItineraryVersion === undefined
+          ? {}
+          : { active_itinerary_version: activeItineraryVersion }),
         ...(normalizedCurrentLocation === undefined
           ? {}
           : { current_location: normalizedCurrentLocation }),

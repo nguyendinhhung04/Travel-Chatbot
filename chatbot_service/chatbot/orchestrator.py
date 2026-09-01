@@ -1,63 +1,40 @@
-"""Intent-aware orchestration for the travel question-answering chatbot."""
+"""Application service for the travel chatbot request flow."""
 
 from __future__ import annotations
 
-import json
-import sys
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
 
 from django.conf import settings
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from chatbot.destination_discovery import (
-    DestinationCandidateGenerator,
-    DestinationDiscoveryPipeline,
+from chatbot.destination_discovery import DestinationCandidateGenerator
+from chatbot.intent_routing.contracts import IntentContext, IntentExecutionResult
+from chatbot.intent_routing.execution import (
+    ToolInfrastructureError,
+    first_result_coordinates,
+    raise_if_all_tools_had_system_failures,
 )
-from chatbot.intent import TravelIntent
-from chatbot.rag.rag_chain import get_chat_model, normalize_answer
-from chatbot.response_policy import response_policy_for
+from chatbot.intent_routing.factory import build_intent_router
+from chatbot.intent_routing.router import IntentRouter
+from chatbot.itinerary_making import ItineraryCandidateGenerator, ItineraryMakingData
+from chatbot.rag.rag_chain import get_chat_model
 from chatbot.semantic import (
     ConversationMessage,
     SemanticInterpretation,
     SemanticInterpreter,
     SemanticLocation,
 )
-from chatbot.tool_planner import PlannedToolCall, plan_tools
 from chatbot.tools.mapbox_client import MapboxToolClient
-from chatbot.tools.models import ChatPlace, ChatSource
+from chatbot.tools.models import ChatPlace, ChatSource, ItineraryData
 from chatbot.tools.registry import ToolExecution, ToolRegistry
 
-
-SYSTEM_PROMPT = """Bạn là trợ lý tư vấn du lịch tiếng Việt.
-
-Dùng đúng phân tích, chính sách nguồn, dữ liệu backend và lịch sử được cung cấp.
-- Không nhắc tool, RAG, schema hay JSON trong câu trả lời.
-- Không tự tạo dữ liệu có thể thay đổi như địa chỉ, tọa độ, rating, giờ mở cửa,
-  điện thoại, website hoặc giá. Bỏ qua trường không có giá trị; không loại một địa
-  điểm chỉ vì thiếu rating.
-- Với needs_clarification, chỉ hỏi thông tin còn thiếu. Với unsupported, nói rõ
-  giới hạn; không giả vờ đã chỉ đường, đọc giao thông thời gian thực hoặc lưu dữ liệu.
-- Lịch trình chỉ là tư vấn văn bản, không tuyên bố đã lưu hay tối ưu tuyến đường.
-- Trả lời tự nhiên, có nhận định và đủ giúp người dùng quyết định. Dùng plain text,
-  không dùng bảng hoặc Markdown phức tạp.
-- Khi nhắc địa điểm có trong dữ liệu Mapbox, phải giữ nguyên trường `name` của
-  địa điểm đó; không đổi tên, dịch tên hoặc tự rút gọn tên.
-- Chọn bố cục phù hợp câu hỏi. Khi có nhiều nơi, tách từng nơi/nhóm bằng dòng trống;
-  tránh khuôn lặp, nhãn thừa, câu sáo rỗng và lặp lại dữ liệu.
-"""
-
-NO_TOOL_CONTEXT = "Không có dữ liệu tool cho yêu cầu này."
-
+from .answer_composer import AnswerComposer, NO_TOOL_CONTEXT, SYSTEM_PROMPT
+from .response_projector import PlaceDetailsLoader, ResponseProjector
 
 
 CURRENT_LOCATION_TOOL_NAME = "get_current_location"
-
-
-class ToolInfrastructureError(RuntimeError):
-    """Raised when every planned tool failed for infrastructure reasons."""
 
 
 @dataclass(frozen=True)
@@ -67,10 +44,12 @@ class ChatOrchestratorResult:
     interpretation: SemanticInterpretation | None = None
     places: list[ChatPlace] = field(default_factory=list)
     client_tool_call: str | None = None
+    itinerary: ItineraryMakingData | ItineraryData | None = None
+    itinerary_operation: dict[str, Any] | None = None
 
 
 class ChatOrchestrator:
-    """Interpret one question, execute a deterministic tool plan, then answer."""
+    """Run classifier, capability gate, router, composer and projector."""
 
     def __init__(
         self,
@@ -79,28 +58,31 @@ class ChatOrchestrator:
         *,
         semantic_interpreter: SemanticInterpreter | None = None,
         candidate_generator: DestinationCandidateGenerator | None = None,
+        itinerary_candidate_generator: ItineraryCandidateGenerator | None = None,
+        place_details_loader: PlaceDetailsLoader | None = None,
         max_tool_calls: int | None = None,
+        router: IntentRouter | None = None,
     ) -> None:
         resolved_max_calls = (
             settings.CHATBOT_MAX_TOOL_CALLS
             if max_tool_calls is None
             else max_tool_calls
         )
-        if isinstance(resolved_max_calls, bool) or not isinstance(
-            resolved_max_calls,
-            int,
-        ):
+        if isinstance(resolved_max_calls, bool) or not isinstance(resolved_max_calls, int):
             raise ValueError("max_tool_calls must be an integer")
         if resolved_max_calls <= 0:
             raise ValueError("max_tool_calls must be greater than zero")
 
-        self._chat_model = chat_model
-        self._registry = registry
-        self._semantic_interpreter = (
-            semantic_interpreter or SemanticInterpreter(chat_model)
+        self._semantic_interpreter = semantic_interpreter or SemanticInterpreter(chat_model)
+        self._router = router or build_intent_router(
+            chat_model,
+            registry,
+            max_tool_calls=resolved_max_calls,
+            candidate_generator=candidate_generator,
+            itinerary_candidate_generator=itinerary_candidate_generator,
         )
-        self._candidate_generator = candidate_generator
-        self._max_tool_calls = resolved_max_calls
+        self._answer_composer = AnswerComposer(chat_model)
+        self._response_projector = ResponseProjector(place_details_loader)
 
     def answer(
         self,
@@ -108,15 +90,22 @@ class ChatOrchestrator:
         *,
         history: Sequence[ConversationMessage] = (),
         current_location: SemanticLocation | None = None,
+        active_itinerary_id: str | None = None,
+        active_itinerary_version: int | None = None,
     ) -> ChatOrchestratorResult:
         cleaned_question = question.strip()
         if not cleaned_question:
             raise ValueError("question must not be empty")
 
+        interpretation_arguments: dict[str, Any] = {
+            "history": history,
+            "current_location": current_location,
+        }
+        if active_itinerary_id is not None:
+            interpretation_arguments["active_itinerary_id"] = active_itinerary_id
         interpretation = self._semantic_interpreter.interpret(
             cleaned_question,
-            history=history,
-            current_location=current_location,
+            **interpretation_arguments,
         )
         if (
             current_location is None
@@ -131,465 +120,91 @@ class ChatOrchestrator:
                 interpretation=interpretation,
                 client_tool_call=CURRENT_LOCATION_TOOL_NAME,
             )
-        destination_evidence: dict[str, Any] | None = None
-        tool_plan = plan_tools(interpretation)
-        if (
-            interpretation.primary_intent == TravelIntent.DESTINATION_DISCOVERY
-            and tool_plan
-        ):
-            discovery_run = DestinationDiscoveryPipeline(
-                self._chat_model,
-                self._registry,
-                max_tool_calls=self._max_tool_calls,
-                candidate_generator=self._candidate_generator,
-            ).execute(
-                cleaned_question,
-                history=history,
-                interpretation=interpretation,
-                planned_calls=tool_plan,
-            )
-            planned_calls = discovery_run.calls
-            executions = discovery_run.executions
-            destination_evidence = discovery_run.evidence
-        else:
-            planned_calls = list(tool_plan[: self._max_tool_calls])
-            executions = self._execute_plan(planned_calls)
-        self._raise_if_all_tools_had_system_failures(executions)
 
-        sources = self._collect_unique_sources(executions)
-        messages = self._build_answer_messages(
+        context = IntentContext(
+            question=cleaned_question,
+            history=tuple(history),
+            interpretation=interpretation,
+            current_location=current_location,
+            active_itinerary_id=active_itinerary_id,
+            active_itinerary_version=active_itinerary_version,
+        )
+        started_at = perf_counter()
+        execution_result = self._router.dispatch(context)
+        duration_ms = round((perf_counter() - started_at) * 1000, 2)
+        self._log_routing(interpretation, execution_result, duration_ms)
+        raise_if_all_tools_had_system_failures(execution_result.executions)
+
+        answer = self._answer_composer.compose(
             cleaned_question,
             history=history,
             interpretation=interpretation,
-            planned_calls=planned_calls,
-            executions=executions,
-            destination_evidence=destination_evidence,
-        )
-        response = self._invoke_ai_message(
-            self._chat_model,
-            messages,
+            execution_result=execution_result,
             sensitive_location=current_location,
         )
-        self._print_model_response(response)
-        answer = self._normalized_response_text(response)
+        sources = ResponseProjector.collect_unique_sources(execution_result.executions)
+        places = self._response_projector.project_places(
+            answer,
+            execution_result.executions,
+            execution_result.destination_evidence,
+        )
         return ChatOrchestratorResult(
             answer=answer,
             sources=sources,
             interpretation=interpretation,
-            places=self._collect_answer_places(
-                answer,
-                executions,
-                destination_evidence,
-            ),
+            places=places,
+            itinerary=execution_result.itinerary,
+            itinerary_operation=execution_result.itinerary_operation,
         )
 
-    def _execute_plan(
+    def _log_routing(
         self,
-        calls: Sequence[PlannedToolCall],
-    ) -> list[ToolExecution]:
-        executions: list[ToolExecution] = []
-        destination_coordinates: dict[str, tuple[float, float]] = {}
-        for call in calls:
-            arguments = dict(call.arguments)
-            if (
-                call.name == "mapbox_category_search"
-                and call.destination is not None
-                and "proximity" not in arguments
-            ):
-                coordinates = destination_coordinates.get(call.destination)
-                if coordinates is None:
-                    arguments["near"] = call.destination
-                else:
-                    longitude, latitude = coordinates
-                    arguments.pop("near", None)
-                    arguments["proximity"] = f"{longitude},{latitude}"
-
-            execution = self._registry.execute(call.name, arguments)
-            executions.append(execution)
-            if (
-                call.evidence_kind == "destination_location"
-                and call.destination is not None
-            ):
-                coordinates = self._first_result_coordinates(execution)
-                if coordinates is not None:
-                    destination_coordinates[call.destination] = coordinates
-        return executions
-
-    @staticmethod
-    def _first_result_coordinates(
-        execution: ToolExecution,
-    ) -> tuple[float, float] | None:
-        if not execution.success:
-            return None
-        try:
-            payload = json.loads(execution.content)
-            result = payload["data"]["results"][0]
-            longitude = float(result["longitude"])
-            latitude = float(result["latitude"])
-        except (KeyError, IndexError, TypeError, ValueError):
-            return None
-        return longitude, latitude
-
-    @staticmethod
-    def _build_answer_messages(
-        question: str,
-        *,
-        history: Sequence[ConversationMessage],
         interpretation: SemanticInterpretation,
-        planned_calls: Sequence[PlannedToolCall],
-        executions: Sequence[ToolExecution],
-        destination_evidence: dict[str, Any] | None = None,
-    ) -> list[Any]:
-        if destination_evidence is None:
-            evidence_content = ChatOrchestrator._ordinary_evidence_content(
-                planned_calls,
-                executions,
-            )
-        else:
-            evidence_content = json.dumps(
-                destination_evidence,
-                ensure_ascii=False,
-                indent=2,
-            )
-        response_policy = (
-            response_policy_for(interpretation.primary_intent)
-            if planned_calls or destination_evidence is not None
-            else None
-        )
-        prompt_sections = [f"=== HƯỚNG DẪN ===\n{SYSTEM_PROMPT.strip()}"]
-        if response_policy is not None:
-            prompt_sections.append(
-                f"=== CHÍNH SÁCH NGUỒN ===\n{response_policy.strip()}"
-            )
-        prompt_sections.extend(
-            (
-                f"=== CÂU HỎI ===\n{interpretation.normalized_query}",
-                f"=== DỮ LIỆU BACKEND ===\n{evidence_content}",
-            )
-        )
-        messages: list[Any] = [
-            SystemMessage(content="\n\n".join(prompt_sections))
-        ]
-        for message in history:
-            if message.role == "user":
-                messages.append(HumanMessage(content=message.content))
-            else:
-                messages.append(AIMessage(content=message.content))
-        messages.append(HumanMessage(content=question))
-        return messages
-
-    @staticmethod
-    def _ordinary_evidence_content(
-        calls: Sequence[PlannedToolCall],
-        executions: Sequence[ToolExecution],
-    ) -> str:
-        if not calls:
-            return NO_TOOL_CONTEXT
-
-        payload: dict[str, Any] = {"knowledgeBase": []}
-        mapbox_calls = [
-            (call, execution)
-            for call, execution in zip(calls, executions, strict=True)
-            if call.name.startswith("mapbox_")
-        ]
-        if mapbox_calls:
-            payload["mapbox"] = {
-                "success": all(execution.success for _, execution in mapbox_calls),
-                "destinationLocations": [],
-                "places": [],
-            }
-
-        errors: list[dict[str, str]] = []
-        for call, execution in zip(calls, executions, strict=True):
-            try:
-                result = json.loads(execution.content)
-            except (TypeError, json.JSONDecodeError):
-                result = {}
-
-            if not execution.success:
-                error_code = execution.error_code or result.get("errorCode")
-                error: dict[str, str] = {"tool": call.name}
-                if isinstance(error_code, str) and error_code:
-                    error["errorCode"] = error_code
-                errors.append(error)
-                continue
-
-            data = result.get("data")
-            if not isinstance(data, dict):
-                continue
-
-            if call.name == "search_travel_knowledge":
-                chunks = data.get("chunks")
-                if not isinstance(chunks, list):
-                    continue
-                for chunk in chunks:
-                    if not isinstance(chunk, dict):
-                        continue
-                    title = chunk.get("title")
-                    content = chunk.get("content")
-                    if isinstance(title, str) and isinstance(content, str):
-                        payload["knowledgeBase"].append(
-                            {"title": title, "content": content}
-                        )
-                continue
-
-            if not call.name.startswith("mapbox_"):
-                continue
-            results = data.get("results")
-            if not isinstance(results, list):
-                continue
-
-            target = (
-                payload["mapbox"]["destinationLocations"]
-                if call.evidence_kind == "destination_location"
-                else payload["mapbox"]["places"]
-            )
-            for place in results:
-                compact_place = ChatOrchestrator._compact_mapbox_place(
-                    place,
-                    destination_location=(
-                        call.evidence_kind == "destination_location"
-                    ),
-                )
-                if compact_place is not None:
-                    target.append(compact_place)
-
-        if errors:
-            payload["errors"] = errors
-        return json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    @staticmethod
-    def _compact_mapbox_place(
-        place: Any,
-        *,
-        destination_location: bool,
-    ) -> dict[str, Any] | None:
-        if not isinstance(place, dict):
-            return None
-        required_fields = ("mapboxId", "name", "longitude", "latitude")
-        if any(place.get(field) is None for field in required_fields):
-            return None
-
-        compact = {field: place[field] for field in required_fields}
-        if destination_location:
-            return compact
-
-        optional_fields = (
-            "fullAddress",
-            "poiCategories",
-            "operationalStatus",
-            "distanceMeters",
-            "etaMinutes",
-            "rating",
-        )
-        for field in optional_fields:
-            value = place.get(field)
-            if value is not None and value != []:
-                compact[field] = value
-        return compact
-
-    @staticmethod
-    def _invoke_ai_message(
-        model: Any,
-        messages: list[Any],
-        *,
-        sensitive_location: SemanticLocation | None = None,
-    ) -> AIMessage:
-        ChatOrchestrator._print_model_request(
-            messages,
-            sensitive_location=sensitive_location,
-        )
-        response = model.invoke(messages)
-        if not isinstance(response, AIMessage):
-            raise RuntimeError("Gemini returned an unsupported response type")
-        return response
-
-    @staticmethod
-    def _print_model_request(
-        messages: Sequence[Any],
-        *,
-        sensitive_location: SemanticLocation | None = None,
+        result: IntentExecutionResult,
+        duration_ms: float,
     ) -> None:
-        """Print message roles and content without LangChain metadata escaping."""
-        sections: list[str] = []
-        for index, message in enumerate(messages, start=1):
-            content = message.content
-            if not isinstance(content, str):
-                content = json.dumps(content, ensure_ascii=False, indent=2)
-            if sensitive_location is not None:
-                for coordinate in (
-                    sensitive_location.longitude,
-                    sensitive_location.latitude,
-                ):
-                    if coordinate is not None:
-                        content = content.replace(str(coordinate), "[location-redacted]")
-            sections.append(
-                f"--- MESSAGE {index}: {message.type.upper()} ---\n{content}"
-            )
-        output = "Gemini request messages:\n" + "\n\n".join(sections) + "\n"
-        ChatOrchestrator._print_terminal(output)
+        import logging
 
-    @staticmethod
-    def _print_model_response(response: AIMessage) -> None:
-        """Print Gemini's answer without empty LangChain metadata."""
-        content = response.content
-        if not isinstance(content, str):
-            content = json.dumps(content, ensure_ascii=False, indent=2)
-        output = f"Gemini response:\n--- MESSAGE: AI ---\n{content}\n"
-        ChatOrchestrator._print_terminal(output)
-
-    @staticmethod
-    def _print_terminal(output: str) -> None:
-        """Prefer the terminal text encoding and fall back to UTF-8 bytes."""
-        try:
-            print(output, end="", flush=True)
-        except UnicodeEncodeError:
-            stdout_buffer = getattr(sys.stdout, "buffer", None)
-            if stdout_buffer is None:
-                raise
-            stdout_buffer.write(output.encode("utf-8"))
-            stdout_buffer.flush()
-
-    @staticmethod
-    def _normalized_response_text(response: AIMessage) -> str:
-        answer = response.text.strip()
-        if not answer:
-            raise RuntimeError("Gemini returned an empty answer")
-        normalized = normalize_answer(answer)
-        if not normalized:
-            raise RuntimeError("Gemini returned an empty answer")
-        return normalized
-
-    @staticmethod
-    def _normalize_place_text(value: str) -> str:
-        return " ".join(
-            unicodedata.normalize("NFKC", value).casefold().split()
+        logging.getLogger(__name__).info(
+            "intent routed",
+            extra={
+                "primary_intent": interpretation.primary_intent.value,
+                "semantic_status": interpretation.status.value,
+                "handler_class": type(
+                    self._router.handlers[interpretation.primary_intent]
+                ).__name__,
+                "handler_tool_names": [call.name for call in result.planned_calls],
+                "tool_count": len(result.planned_calls),
+                "handler_duration_ms": duration_ms,
+                "failure_category": (
+                    "success"
+                    if any(execution.success for execution in result.executions)
+                    or not result.executions
+                    else "tool_failure"
+                ),
+            },
         )
 
-    @classmethod
-    def _collect_answer_places(
-        cls,
-        answer: str,
-        executions: Sequence[ToolExecution],
-        destination_evidence: dict[str, Any] | None,
-    ) -> list[ChatPlace]:
-        """Return only verified places whose names occur in the final answer."""
-        candidates: dict[str, dict[str, Any]] = {}
+    # Compatibility aliases keep the old unit-level helpers available while
+    # their implementation lives in dedicated modules.
+    _first_result_coordinates = staticmethod(first_result_coordinates)
+    _ordinary_evidence_content = staticmethod(AnswerComposer.ordinary_evidence_content)
+    _collect_answer_places = staticmethod(ResponseProjector.collect_answer_places)
+    _collect_unique_sources = staticmethod(ResponseProjector.collect_unique_sources)
+    _invoke_ai_message = staticmethod(AnswerComposer.invoke_ai_message)
+    _print_model_request = staticmethod(AnswerComposer.print_model_request)
+    _print_model_response = staticmethod(AnswerComposer.print_model_response)
+    _print_terminal = staticmethod(AnswerComposer.print_terminal)
+    _normalized_response_text = staticmethod(AnswerComposer.normalized_response_text)
 
-        def add_candidate(value: Any) -> None:
-            if not isinstance(value, dict):
-                return
-            mapbox_id = value.get("mapboxId")
-            name = value.get("name")
-            if not isinstance(mapbox_id, str) or not mapbox_id.strip():
-                return
-            if not isinstance(name, str) or not name.strip():
-                return
-            try:
-                longitude = float(value["longitude"])
-                latitude = float(value["latitude"])
-            except (KeyError, TypeError, ValueError):
-                return
-            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
-                return
-
-            item = candidates.setdefault(
-                mapbox_id.strip(),
-                {
-                    "mapboxId": mapbox_id.strip(),
-                    "names": [],
-                    "longitude": longitude,
-                    "latitude": latitude,
-                },
-            )
-            clean_name = name.strip()
-            if clean_name not in item["names"]:
-                item["names"].append(clean_name)
-
-        if destination_evidence is not None:
-            for candidate in destination_evidence.get("matchedCandidates", []):
-                add_candidate(candidate)
-            for item in destination_evidence.get("additionalMapboxPlaces", []):
-                if isinstance(item, dict):
-                    add_candidate(item.get("place"))
-
-        for execution in executions:
-            if not execution.success:
-                continue
-            try:
-                payload = json.loads(execution.content)
-            except (TypeError, ValueError):
-                continue
-            data = payload.get("data") if isinstance(payload, dict) else None
-            if not isinstance(data, dict):
-                continue
-            for result in data.get("results", []):
-                if not isinstance(result, dict):
-                    continue
-                add_candidate(result.get("place", result))
-            for place in data.get("additionalPlaces", []):
-                add_candidate(place)
-
-        normalized_answer = cls._normalize_place_text(answer)
-        name_to_ids: dict[str, set[str]] = {}
-        for mapbox_id, candidate in candidates.items():
-            for name in candidate["names"]:
-                name_to_ids.setdefault(cls._normalize_place_text(name), set()).add(
-                    mapbox_id
-                )
-
-        places: list[ChatPlace] = []
-        for mapbox_id, candidate in candidates.items():
-            matching_names = [
-                name
-                for name in candidate["names"]
-                if name_to_ids.get(cls._normalize_place_text(name)) == {mapbox_id}
-                and cls._normalize_place_text(name) in normalized_answer
-            ]
-            if not matching_names:
-                continue
-            display_name = max(matching_names, key=len)
-            places.append(
-                ChatPlace(
-                    mapboxId=mapbox_id,
-                    name=display_name,
-                    longitude=candidate["longitude"],
-                    latitude=candidate["latitude"],
-                )
-            )
-        return places
-
-    @staticmethod
-    def _collect_unique_sources(
-        executions: Sequence[ToolExecution],
-    ) -> list[ChatSource]:
-        sources: list[ChatSource] = []
-        source_keys: set[str] = set()
-        for execution in executions:
-            for source in execution.sources:
-                source_key = source.model_dump_json()
-                if source_key in source_keys:
-                    continue
-                source_keys.add(source_key)
-                sources.append(source)
-        return sources
+    def _enrich_answer_places(self, places: list[ChatPlace]) -> list[ChatPlace]:
+        return self._response_projector.enrich_places(places)
 
     @staticmethod
     def _raise_if_all_tools_had_system_failures(
         executions: Sequence[ToolExecution],
     ) -> None:
-        if (
-            executions
-            and not any(execution.success for execution in executions)
-            and all(execution.system_failure for execution in executions)
-        ):
-            raise ToolInfrastructureError(
-                "All planned tools failed because of infrastructure errors."
-            )
+        raise_if_all_tools_had_system_failures(executions)
 
 
 def orchestrate_chat(
@@ -597,16 +212,22 @@ def orchestrate_chat(
     *,
     history: Sequence[ConversationMessage] = (),
     current_location: SemanticLocation | None = None,
+    active_itinerary_id: str | None = None,
+    active_itinerary_version: int | None = None,
     chat_model: Any | None = None,
     registry: ToolRegistry | None = None,
     semantic_interpreter: SemanticInterpreter | None = None,
     candidate_generator: DestinationCandidateGenerator | None = None,
+    itinerary_candidate_generator: ItineraryCandidateGenerator | None = None,
     max_tool_calls: int | None = None,
+    router: IntentRouter | None = None,
+    place_details_loader: PlaceDetailsLoader | None = None,
 ) -> ChatOrchestratorResult:
     """Run one stateless request and close owned HTTP resources."""
     active_model = chat_model or get_chat_model(thinking_level="medium")
     active_interpreter = semantic_interpreter
     active_candidate_generator = candidate_generator
+    active_itinerary_candidate_generator = itinerary_candidate_generator
 
     if chat_model is None and (
         active_interpreter is None or active_candidate_generator is None
@@ -614,21 +235,29 @@ def orchestrate_chat(
         planning_model = get_chat_model(thinking_level="low")
         active_interpreter = active_interpreter or SemanticInterpreter(planning_model)
         active_candidate_generator = (
-            active_candidate_generator
-            or DestinationCandidateGenerator(planning_model)
+            active_candidate_generator or DestinationCandidateGenerator(planning_model)
         )
 
     if registry is not None:
+        orchestrator_options: dict[str, Any] = {}
+        if router is not None:
+            orchestrator_options["router"] = router
+        if place_details_loader is not None:
+            orchestrator_options["place_details_loader"] = place_details_loader
         return ChatOrchestrator(
             active_model,
             registry,
             semantic_interpreter=active_interpreter,
             candidate_generator=active_candidate_generator,
+            itinerary_candidate_generator=active_itinerary_candidate_generator,
             max_tool_calls=max_tool_calls,
+            **orchestrator_options,
         ).answer(
             question,
             history=history,
             current_location=current_location,
+            active_itinerary_id=active_itinerary_id,
+            active_itinerary_version=active_itinerary_version,
         )
 
     with MapboxToolClient() as mapbox_client:
@@ -638,11 +267,18 @@ def orchestrate_chat(
             active_registry,
             semantic_interpreter=active_interpreter,
             candidate_generator=active_candidate_generator,
+            itinerary_candidate_generator=active_itinerary_candidate_generator,
+            place_details_loader=(
+                place_details_loader or mapbox_client.retrieve_place_details
+            ),
             max_tool_calls=max_tool_calls,
+            **({"router": router} if router is not None else {}),
         ).answer(
             question,
             history=history,
             current_location=current_location,
+            active_itinerary_id=active_itinerary_id,
+            active_itinerary_version=active_itinerary_version,
         )
 
 

@@ -18,10 +18,16 @@ from .mapbox_client import (
 )
 from .models import (
     ChatSource,
+    ItineraryAddStopInput,
+    ItineraryCreateInput,
+    ItineraryData,
+    ItineraryGetInput,
     MapboxCategorySearchInput,
     MapboxCandidateResolutionData,
     MapboxCandidateResolveInput,
     MapboxForwardSearchInput,
+    MapboxOptimizeRouteInput,
+    MapboxOptimizedRouteData,
     MapboxPlaceSummaryData,
     MapboxPlaceToolData,
     MapboxReverseLookupInput,
@@ -43,6 +49,10 @@ MAPBOX_FORWARD_SEARCH_TOOL_NAME = "mapbox_forward_search"
 MAPBOX_CATEGORY_SEARCH_TOOL_NAME = "mapbox_category_search"
 MAPBOX_REVERSE_LOOKUP_TOOL_NAME = "mapbox_reverse_lookup"
 MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME = "mapbox_resolve_candidates"
+MAPBOX_OPTIMIZE_ROUTE_TOOL_NAME = "mapbox_optimize_route"
+GET_ITINERARY_TOOL_NAME = "get_itinerary"
+ADD_ITINERARY_STOP_TOOL_NAME = "add_itinerary_stop"
+CREATE_ITINERARY_TOOL_NAME = "create_itinerary"
 UNKNOWN_TOOL_ERROR = "unknown_tool"
 INVALID_ARGUMENTS_ERROR = "invalid_arguments"
 TOOL_EXECUTION_ERROR = "tool_execution_error"
@@ -56,6 +66,7 @@ SYSTEM_FAILURE_CODES = {
     "mapbox_unavailable",
     "mapbox_http_error",
     "mapbox_invalid_response",
+    "database_unavailable",
     TOOL_EXECUTION_ERROR,
 }
 
@@ -73,7 +84,7 @@ class ToolExecution:
 
 @dataclass(frozen=True)
 class ToolDefinition:
-    """Public description of one backend-selected read-only tool."""
+    """Public description of one allowlisted backend tool."""
 
     name: str
     description: str
@@ -87,7 +98,7 @@ class _RegisteredTool:
 
 
 class ToolRegistry:
-    """Validate and execute the four tools used by the Q&A runtime."""
+    """Validate and execute the allowlisted tools used by the chatbot runtime."""
 
     def __init__(
         self,
@@ -164,6 +175,45 @@ class ToolRegistry:
         tools = [
             _RegisteredTool(
                 definition=ToolDefinition(
+                    name=CREATE_ITINERARY_TOOL_NAME,
+                    description=(
+                        "Táº¡o má»™t lá»‹ch trÃ¬nh má»›i tá»« cÃ¡c POI Ä‘Ã£ xÃ¡c minh, tá»‘i Æ°u route vÃ  lÆ°u vÃ o backend."
+                    ),
+                    input_model=ItineraryCreateInput,
+                ),
+                handler=self._mapbox_client.create_itinerary,
+            ),
+            _RegisteredTool(
+                definition=ToolDefinition(
+                    name=GET_ITINERARY_TOOL_NAME,
+                    description="Lấy lịch trình admin đang mở hoặc mới nhất.",
+                    input_model=ItineraryGetInput,
+                ),
+                handler=self._mapbox_client.get_itinerary,
+            ),
+            _RegisteredTool(
+                definition=ToolDefinition(
+                    name=ADD_ITINERARY_STOP_TOOL_NAME,
+                    description=(
+                        "Thêm một POI đã xác minh, tối ưu lại route và lưu phiên bản mới."
+                    ),
+                    input_model=ItineraryAddStopInput,
+                ),
+                handler=self._mapbox_client.add_itinerary_stop,
+            ),
+            _RegisteredTool(
+                definition=ToolDefinition(
+                    name=MAPBOX_OPTIMIZE_ROUTE_TOOL_NAME,
+                    description=(
+                        "Tối ưu thứ tự và tuyến đường qua 2-12 POI đã được backend "
+                        "xác minh cho yêu cầu xây dựng lịch trình."
+                    ),
+                    input_model=MapboxOptimizeRouteInput,
+                ),
+                handler=self._mapbox_client.optimize_route,
+            ),
+            _RegisteredTool(
+                definition=ToolDefinition(
                     name=MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME,
                     description=(
                         "Xác minh theo batch các candidate do Gemini đề xuất, matching "
@@ -236,6 +286,10 @@ class ToolRegistry:
             return (MapboxSource(attribution=result.data.attribution),)
         if isinstance(result.data, MapboxCandidateResolutionData):
             return (MapboxSource(attribution=result.data.attribution),)
+        if isinstance(result.data, MapboxOptimizedRouteData):
+            return (MapboxSource(attribution="© Mapbox"),)
+        if isinstance(result.data, ItineraryData):
+            return (MapboxSource(attribution="© Mapbox"),)
         return ()
 
     @staticmethod
@@ -274,9 +328,13 @@ class ToolRegistry:
 
 
 __all__ = [
+    "ADD_ITINERARY_STOP_TOOL_NAME",
+    "CREATE_ITINERARY_TOOL_NAME",
+    "GET_ITINERARY_TOOL_NAME",
     "INVALID_ARGUMENTS_ERROR",
     "MAPBOX_CATEGORY_SEARCH_TOOL_NAME",
     "MAPBOX_FORWARD_SEARCH_TOOL_NAME",
+    "MAPBOX_OPTIMIZE_ROUTE_TOOL_NAME",
     "MAPBOX_REVERSE_LOOKUP_TOOL_NAME",
     "MAPBOX_RESOLVE_CANDIDATES_TOOL_NAME",
     "SEARCH_TRAVEL_KNOWLEDGE_TOOL_NAME",

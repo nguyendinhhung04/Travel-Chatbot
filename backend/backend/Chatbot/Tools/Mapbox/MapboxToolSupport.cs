@@ -54,6 +54,10 @@ internal static class MapboxToolSupport
                 "mapbox_unavailable",
                 "Không thể kết nối đến Mapbox API.");
         }
+        catch (MapboxToolFailureException error)
+        {
+            return ToolResult<T>.Failed(error.ErrorCode, error.Message);
+        }
         catch (JsonException)
         {
             return ToolResult<T>.Failed(
@@ -61,4 +65,11 @@ internal static class MapboxToolSupport
                 "Mapbox API trả về dữ liệu không hợp lệ.");
         }
     }
+}
+
+internal sealed class MapboxToolFailureException(
+    string errorCode,
+    string safeMessage) : Exception(safeMessage)
+{
+    public string ErrorCode { get; } = errorCode;
 }
