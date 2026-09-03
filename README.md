@@ -11,13 +11,13 @@ dữ liệu địa điểm từ Mapbox. Dự án gồm ba ứng dụng chính:
 
 | Thành phần | Công nghệ | Chức năng chính |
 | --- | --- | --- |
-| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 | Giao diện chat, lịch sử hội thoại và API proxy |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4 | Giao diện chat, context hội thoại, speech-to-text và API proxy |
 | Bản đồ | Mapbox GL JS | Hiển thị vị trí người dùng và địa điểm được gợi ý |
 | Chatbot service | Python, Django 5.2, Django REST Framework | Nhận request, phân tích câu hỏi và điều phối các công cụ |
-| AI | Google Gemini, LangChain | Hiểu ý định, sinh ứng viên và tạo câu trả lời |
+| AI | Google Gemini, Gemini Live, LangChain | Hiểu ý định, nhận dạng giọng nói, sinh ứng viên và tạo câu trả lời |
 | RAG | LangChain, ChromaDB, Gemini Embeddings | Lập chỉ mục và truy xuất Knowledge Base |
-| Backend | ASP.NET Core Web API, .NET 10 | Kiểm tra request, gọi và chuẩn hóa dữ liệu Mapbox |
-| Dịch vụ ngoài | Google Gemini API, Mapbox Search API | Sinh nội dung, embedding, tìm kiếm và xác minh địa điểm |
+| Backend | ASP.NET Core Web API, .NET 10 | Gọi Mapbox và cấp token ngắn hạn cho Gemini Live |
+| Dịch vụ ngoài | Google Gemini API, Gemini Live API, Mapbox Search API | Sinh nội dung, embedding, speech-to-text, tìm kiếm và xác minh địa điểm |
 
 ## Kiến trúc hệ thống
 
@@ -48,6 +48,8 @@ flowchart LR
 - Hiển thị giao diện chat, nguồn tham khảo và thông tin địa điểm.
 - Gửi request qua Next.js API route thay vì gọi Django trực tiếp từ trình duyệt.
 - Lưu tối đa ba lượt hỏi đáp gần nhất trong `localStorage`.
+- Thu âm từ microphone và đưa transcript tiếng Việt vào ô soạn thảo để người dùng
+  kiểm tra, chỉnh sửa rồi chủ động gửi.
 - Xin quyền truy cập GPS khi chatbot cần vị trí hiện tại.
 - Hiển thị vị trí và marker địa điểm bằng Mapbox GL JS.
 
@@ -70,6 +72,7 @@ flowchart LR
 - Reverse geocoding từ tọa độ.
 - Xác minh danh sách ứng viên địa điểm.
 - Lấy chi tiết các POI theo lô.
+- Cấp ephemeral token một lần dùng cho phiên speech-to-text với Gemini Live.
 
 Mapbox server token được giữ tại ASP.NET Core. Frontend chỉ sử dụng public token
 để hiển thị bản đồ.
@@ -231,7 +234,72 @@ flowchart TD
 `unsupported_capability` áp dụng cho yêu cầu chưa được hỗ trợ như chỉ đường trực
 tiếp, giao thông thời gian thực hoặc lưu dữ liệu người dùng.
 
-### 7. Luồng hiển thị kết quả trên frontend
+### 7. Quản lý context hội thoại
+
+Ứng dụng giữ context ở frontend để Django tiếp tục stateless, không tạo Django
+Session, bảng hội thoại hoặc migration. Một lượt hội thoại gồm một câu hỏi của người
+dùng và một câu trả lời của trợ lý; tối đa ba lượt hoàn chỉnh, tương đương sáu message
+`user`/`assistant`, được lưu bằng key `travel_chat_messages` trong `localStorage`.
+
+```mermaid
+flowchart LR
+    LOAD[Mở ứng dụng] --> RESTORE[Khôi phục tối đa 3 lượt từ localStorage]
+    INPUT[Người dùng gửi câu hỏi mới] --> HISTORY[Lấy các lượt đã hoàn chỉnh trước đó]
+    HISTORY --> TRIM[Giới hạn 6 message user/assistant]
+    TRIM --> NEXT[Next.js POST /api/chat]
+    NEXT --> VALIDATE[Next.js và Django kiểm tra history]
+    VALIDATE --> SEMANTIC[Gemini phân tích intent và giải tham chiếu]
+    VALIDATE --> ANSWER[Gemini tạo câu trả lời với context]
+    ANSWER --> COMPLETE[Thêm câu trả lời hoàn chỉnh]
+    COMPLETE --> SAVE[Cắt còn 3 lượt và lưu localStorage]
+    NEW[Cuộc trò chuyện mới] --> CLEAR[Xóa state và travel_chat_messages]
+```
+
+Message người dùng đang chờ phản hồi không được lưu và câu hỏi hiện tại không bị lặp
+trong `history`. Next.js và Django cùng từ chối history vượt quá sáu message; mỗi
+`content` phía Django có giới hạn 4.000 ký tự. `SemanticInterpreter` dùng history để
+hiểu câu hỏi nối tiếp, còn `AnswerComposer` chuyển đúng thứ tự thành
+`HumanMessage`/`AIMessage` trước khi thêm câu hỏi hiện tại.
+
+Khi tải lại trang, dữ liệu hợp lệ được khôi phục; JSON hỏng hoặc trường không hợp lệ
+được bỏ qua để UI vẫn hoạt động. Frontend chỉ lưu nội dung hội thoại và nguồn tham
+khảo cần thiết, không lưu tọa độ GPS hay audio microphone. Nút **Cuộc trò chuyện
+mới** xóa cả state trong bộ nhớ và dữ liệu hội thoại đã lưu.
+
+### 8. Speech-to-text với Gemini Live
+
+Speech-to-text dùng model `gemini-3.5-transcribe-live`, chế độ `SMART` cho tiếng Việt
+`vi-VN`. API key Gemini Live chỉ nằm ở ASP.NET Core; browser nhận ephemeral token
+ngắn hạn, một lần dùng qua Next.js proxy rồi kết nối WebSocket trực tiếp tới Gemini.
+
+```mermaid
+flowchart LR
+    MIC[Người dùng bấm Nói] --> PERMISSION[Trình duyệt xin quyền microphone]
+    PERMISSION --> WORKLET[AudioWorklet chuyển âm thanh thành PCM16 mono 16 kHz]
+
+    FE[Frontend] -->|POST /api/speech-token| NEXT[Next.js proxy]
+    NEXT -->|POST /api/speech/ephemeral-token| NET[ASP.NET Core]
+    NET -->|API key server-side| TOKEN[Gemini v1alpha auth_tokens]
+    TOKEN -->|Ephemeral token một lần dùng| FE
+
+    WORKLET -->|Chunk 100 ms qua WebSocket| LIVE[Gemini Live]
+    FE -->|Setup TEXT, SMART vi-VN, manual activity| LIVE
+    LIVE -->|Interim và final transcript| COMPOSER[Ô soạn thảo]
+    COMPOSER --> EDIT[Người dùng dừng và chỉnh sửa]
+    EDIT -->|Tự bấm Gửi| CHAT[Luồng POST /api/chat]
+```
+
+Audio được gửi theo MIME `audio/pcm;rate=16000` với chunk 1.600 mẫu, tương đương
+khoảng 100 ms. Frontend nhận cả interim transcript để hiển thị khi đang nói và final
+transcript khi kết thúc đoạn nói. WebSocket có thể trả frame dạng `string`, `Blob`
+hoặc `ArrayBuffer`; client xử lý cả ba dạng.
+
+Nút microphone hỗ trợ các trạng thái xin quyền/token, đang nghe và đang dừng. Người
+dùng có thể dừng cả khi bước khởi tạo còn chờ; ứng dụng sẽ đóng WebSocket,
+`AudioContext` và media track khi kết thúc hoặc hủy. Transcript được nối vào nội dung
+đang có trong composer, không tự gửi, không phát lại bằng TTS và không lưu audio.
+
+### 9. Luồng hiển thị kết quả trên frontend
 
 ```mermaid
 flowchart LR
@@ -252,6 +320,8 @@ Frontend không lưu tọa độ GPS chính xác vào `localStorage`.
 - Node.js và npm.
 - Gemini API key.
 - Mapbox access token cho backend và public token cho frontend.
+- Trình duyệt có microphone và cho phép truy cập microphone; dùng `localhost` khi
+  phát triển hoặc HTTPS khi triển khai.
 
 Không commit API key, access token hoặc file `.env` thật lên Git.
 
@@ -265,10 +335,12 @@ Tại thư mục gốc `Travel-Chatbot`:
 
 ```powershell
 dotnet user-secrets set "Mapbox:AccessToken" "your_server_mapbox_token" --project .\backend\backend\backend.csproj
+dotnet user-secrets set "GeminiLive:ApiKey" "your_gemini_api_key" --project .\backend\backend\backend.csproj
 dotnet run --project .\backend\backend\backend.csproj --launch-profile http
 ```
 
-Backend chạy tại `http://localhost:5257`. Swagger UI có tại
+`GeminiLive:ApiKey` được .NET dùng để cấp ephemeral token và không được gửi xuống
+frontend. Backend chạy tại `http://localhost:5257`. Swagger UI có tại
 `http://localhost:5257/swagger` trong môi trường Development.
 
 ### 2. Django Chatbot Service
@@ -340,8 +412,9 @@ npm run test:e2e
 ```
 
 `npm run test:e2e` tự khởi động một Next.js server riêng tại cổng `3100` và chạy
-Playwright bằng Microsoft Edge Stable. Bộ E2E mock response Gemini/Mapbox để kiểm
-tra ổn định luồng frontend; máy chạy test cần cài Microsoft Edge.
+Playwright bằng Microsoft Edge Stable. Bộ E2E mock response Gemini/Mapbox, token STT,
+WebSocket và microphone để kiểm tra ổn định luồng frontend; máy chạy test cần cài
+Microsoft Edge.
 
 Các test cục bộ kiểm tra logic và contract của ứng dụng nhưng không thay thế kiểm
 thử trực tiếp Gemini, Mapbox và kết nối mạng đến các nhà cung cấp.
