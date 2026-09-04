@@ -454,6 +454,7 @@ export default function ChatWindow({
   async function requestChat(
     question: string,
     history: Array<Pick<ChatMessageType, "role" | "content">>,
+    suggestedPlaces: ChatPlace[],
     currentLocation?: UserLocation,
     signal?: AbortSignal,
   ): Promise<unknown> {
@@ -464,6 +465,16 @@ export default function ChatWindow({
       body: JSON.stringify({
         message: question,
         history,
+        ...(suggestedPlaces.length === 0
+          ? {}
+          : {
+              suggested_places: suggestedPlaces.map((place) => ({
+                mapboxId: place.mapboxId,
+                name: place.name,
+                longitude: place.longitude,
+                latitude: place.latitude,
+              })),
+            }),
         ...(activeItineraryId === null
           ? {}
           : { active_itinerary_id: activeItineraryId }),
@@ -508,6 +519,25 @@ export default function ChatWindow({
     return assistantMessage;
   }
 
+  function getSuggestedPlaces() {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== "assistant" || !message.places?.length) continue;
+      return message.places.filter(isPlace).slice(0, 12);
+    }
+    return [];
+  }
+
+  function shouldReuseSuggestedPlaces(question: string) {
+    const normalized = question
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    return /\b(vua|tren|do|nay|goi y|de xuat|cac dia diem|nhung dia diem)\b/.test(
+      normalized,
+    );
+  }
+
   async function sendMessage() {
     const question = input.trim();
     if (!question || loading || persistencePending) return;
@@ -519,6 +549,9 @@ export default function ChatWindow({
     };
 
     const history = getRecentCompleteTurns(messages);
+    const suggestedPlaces = shouldReuseSuggestedPlaces(question)
+      ? getSuggestedPlaces()
+      : [];
 
     const turnId = crypto.randomUUID();
     const requestId = requestIdRef.current + 1;
@@ -530,12 +563,24 @@ export default function ChatWindow({
     setLoading(true);
 
     try {
-      let payload = await requestChat(question, history, undefined, abortController.signal);
+      let payload = await requestChat(
+        question,
+        history,
+        suggestedPlaces,
+        undefined,
+        abortController.signal,
+      );
       if (isCurrentLocationToolCall(payload)) {
         const currentLocation = await getCurrentLocation();
         if (requestId !== requestIdRef.current) return;
         onCurrentLocationReceived(currentLocation);
-        payload = await requestChat(question, history, currentLocation, abortController.signal);
+        payload = await requestChat(
+          question,
+          history,
+          suggestedPlaces,
+          currentLocation,
+          abortController.signal,
+        );
         if (isCurrentLocationToolCall(payload)) {
           throw new Error(LOCATION_ERROR);
         }

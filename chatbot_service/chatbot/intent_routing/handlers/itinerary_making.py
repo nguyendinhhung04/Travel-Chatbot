@@ -47,6 +47,7 @@ class ItineraryMakingHandler(BaseIntentHandler):
             history=context.history,
             interpretation=context.interpretation,
             planned_calls=planned,
+            prior_places=context.prior_places,
         )
         return IntentExecutionResult(
             planned_calls=tuple(run.calls),
@@ -54,6 +55,15 @@ class ItineraryMakingHandler(BaseIntentHandler):
             response_policy=ITINERARY_MAKING_POLICY,
             itinerary_evidence=run.evidence,
             itinerary=run.itinerary,
+            itinerary_operation={
+                "type": "create_itinerary",
+                "success": run.itinerary is not None,
+                **(
+                    {}
+                    if run.itinerary is not None
+                    else {"errorCode": run.evidence.get("errorCode")}
+                ),
+            },
         )
 
 

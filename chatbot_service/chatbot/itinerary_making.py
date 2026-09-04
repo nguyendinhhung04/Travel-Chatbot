@@ -83,6 +83,15 @@ class ItineraryCandidatePlan(ItineraryModel):
     )
 
 
+class ItineraryPlaceReference(ItineraryModel):
+    """A place selected from the immediately preceding chatbot answer."""
+
+    mapbox_id: str = Field(alias="mapboxId", min_length=1, max_length=256)
+    name: str = Field(min_length=1, max_length=200)
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+
 class ItineraryCandidateGenerator:
     """Ask Gemini for bounded place names without provider-owned fields."""
 
@@ -209,6 +218,7 @@ class ItineraryMakingPipeline:
         interpretation: SemanticInterpretation,
         planned_calls: Sequence[PlannedToolCall],
         route_profile: Literal["driving", "walking", "cycling"] = DEFAULT_ROUTE_PROFILE,
+        prior_places: Sequence[ItineraryPlaceReference] = (),
     ) -> ItineraryMakingPipelineResult:
         calls: list[PlannedToolCall] = []
         executions: list[ToolExecution] = []
@@ -261,29 +271,62 @@ class ItineraryMakingPipeline:
                 knowledge_chunks=self._knowledge_chunks(rag_execution),
             )
 
-        try:
-            generator = self._candidate_generator or ItineraryCandidateGenerator(
-                self._chat_model
+        verified_stops: list[VerifiedItineraryStop] = []
+        if prior_places:
+            prior_by_id: dict[str, ItineraryPlaceReference] = {}
+            for place in prior_places:
+                prior_by_id.setdefault(place.mapbox_id, place)
+            selected_prior_places = list(prior_by_id.values())[:MAX_ITINERARY_STOPS]
+            if len(selected_prior_places) < 2:
+                return self._failure(
+                    calls,
+                    executions,
+                    "insufficient_verified_stops",
+                    knowledge_chunks=self._knowledge_chunks(rag_execution),
+                )
+            proposal = ItineraryCandidatePlan(
+                title=f"Lịch trình khám phá {destination}",
+                destination=destination,
+                candidates=[
+                    ItineraryCandidate(
+                        name=place.name,
+                        reason="Địa điểm đã được chọn từ gợi ý trước đó.",
+                    )
+                    for place in selected_prior_places
+                ],
             )
-            proposal = generator.generate(
-                question,
-                interpretation=interpretation,
-                history=history,
-                knowledge_chunks=self._knowledge_chunks(rag_execution),
-            )
-        except Exception as error:
-            logger.warning(
-                "Itinerary candidate generation failed (%s)",
-                type(error).__name__,
-            )
-            return self._failure(
-                calls,
-                executions,
-                "candidate_generation_failed",
-                knowledge_chunks=self._knowledge_chunks(rag_execution),
-            )
-
-        if not _destination_name_matches(proposal.destination, destination):
+            verified_stops = [
+                VerifiedItineraryStop(
+                    mapboxId=place.mapbox_id,
+                    name=place.name,
+                    longitude=place.longitude,
+                    latitude=place.latitude,
+                )
+                for place in selected_prior_places
+            ]
+        else:
+            try:
+                generator = self._candidate_generator or ItineraryCandidateGenerator(
+                    self._chat_model
+                )
+                proposal = generator.generate(
+                    question,
+                    interpretation=interpretation,
+                    history=history,
+                    knowledge_chunks=self._knowledge_chunks(rag_execution),
+                )
+            except Exception as error:
+                logger.warning(
+                    "Itinerary candidate generation failed (%s)",
+                    type(error).__name__,
+                )
+                return self._failure(
+                    calls,
+                    executions,
+                    "candidate_generation_failed",
+                    knowledge_chunks=self._knowledge_chunks(rag_execution),
+                )
+        if not prior_places and not _destination_name_matches(proposal.destination, destination):
             return self._failure(
                 calls,
                 executions,
@@ -296,30 +339,30 @@ class ItineraryMakingPipeline:
             f"candidate-{index}": candidate
             for index, candidate in enumerate(selected_candidates, start=1)
         }
-        verified_stops: list[VerifiedItineraryStop] = []
-        for offset in range(0, len(selected_candidates), MAX_CANDIDATE_BATCH_SIZE):
-            batch_items = list(candidate_by_id.items())[
-                offset : offset + MAX_CANDIDATE_BATCH_SIZE
-            ]
-            resolution_call = self._candidate_resolution_call(
-                coordinates,
-                batch_items,
-            )
-            resolution_execution = self._run_registry(
-                resolution_call,
-                calls,
-                executions,
-            )
-            if resolution_execution is None:
-                return self._failure(
+        if not prior_places:
+            for offset in range(0, len(selected_candidates), MAX_CANDIDATE_BATCH_SIZE):
+                batch_items = list(candidate_by_id.items())[
+                    offset : offset + MAX_CANDIDATE_BATCH_SIZE
+                ]
+                resolution_call = self._candidate_resolution_call(
+                    coordinates,
+                    batch_items,
+                )
+                resolution_execution = self._run_registry(
+                    resolution_call,
                     calls,
                     executions,
-                    "tool_call_budget_exceeded",
-                    knowledge_chunks=self._knowledge_chunks(rag_execution),
                 )
-            verified_stops.extend(
-                self._matched_stops(resolution_execution, candidate_by_id)
-            )
+                if resolution_execution is None:
+                    return self._failure(
+                        calls,
+                        executions,
+                        "tool_call_budget_exceeded",
+                        knowledge_chunks=self._knowledge_chunks(rag_execution),
+                    )
+                verified_stops.extend(
+                    self._matched_stops(resolution_execution, candidate_by_id)
+                )
 
         unique_stops = self._deduplicate_stops(verified_stops)
         if len(unique_stops) < 2:
@@ -751,6 +794,7 @@ __all__ = [
     "ItineraryCandidate",
     "ItineraryCandidateGenerator",
     "ItineraryCandidatePlan",
+    "ItineraryPlaceReference",
     "ItineraryMakingData",
     "ItineraryMakingPipeline",
     "ItineraryMakingPipelineResult",

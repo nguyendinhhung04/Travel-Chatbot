@@ -10,6 +10,13 @@ type HistoryMessage = {
   content: string;
 };
 
+type SuggestedPlace = {
+  mapboxId: string;
+  name: string;
+  longitude: number;
+  latitude: number;
+};
+
 function errorResponse(error: string, status: number) {
   const payload: ChatErrorResponse = { error };
   return Response.json(payload, { status });
@@ -28,6 +35,22 @@ function isHistoryMessage(value: unknown): value is HistoryMessage {
     (historyMessage.role === "user" || historyMessage.role === "assistant") &&
     typeof historyMessage.content === "string" &&
     historyMessage.content.trim().length > 0
+  );
+}
+
+function isSuggestedPlace(value: unknown): value is SuggestedPlace {
+  if (typeof value !== "object" || value === null) return false;
+  const place = value as Partial<SuggestedPlace>;
+  return (
+    Object.keys(place).every((key) =>
+      key === "mapboxId" || key === "name" || key === "longitude" || key === "latitude",
+    ) &&
+    typeof place.mapboxId === "string" &&
+    place.mapboxId.trim().length > 0 &&
+    typeof place.name === "string" &&
+    place.name.trim().length > 0 &&
+    isCoordinate(place.longitude, -180, 180) &&
+    isCoordinate(place.latitude, -90, 90)
   );
 }
 
@@ -65,6 +88,20 @@ export async function POST(request: Request) {
     return errorResponse("Invalid chat history.", 400);
   }
   const history = getRecentCompleteTurns((historyValue ?? []) as HistoryMessage[]);
+
+  const suggestedPlacesValue =
+    typeof body === "object" && body !== null && "suggested_places" in body
+      ? (body as { suggested_places?: unknown }).suggested_places
+      : undefined;
+  if (
+    suggestedPlacesValue !== undefined &&
+    (!Array.isArray(suggestedPlacesValue) ||
+      suggestedPlacesValue.length > 12 ||
+      !suggestedPlacesValue.every(isSuggestedPlace))
+  ) {
+    return errorResponse("Danh sách địa điểm gợi ý không hợp lệ.", 400);
+  }
+  const suggestedPlaces = (suggestedPlacesValue ?? []) as SuggestedPlace[];
 
   const activeItineraryId =
     typeof body === "object" && body !== null && "active_itinerary_id" in body
@@ -138,6 +175,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         message: message.trim(),
         history,
+        ...(suggestedPlaces.length === 0 ? {} : { suggested_places: suggestedPlaces }),
         ...(activeItineraryId === undefined
           ? {}
           : { active_itinerary_id: activeItineraryId }),

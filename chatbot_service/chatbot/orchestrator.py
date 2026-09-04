@@ -18,7 +18,11 @@ from chatbot.intent_routing.execution import (
 )
 from chatbot.intent_routing.factory import build_intent_router
 from chatbot.intent_routing.router import IntentRouter
-from chatbot.itinerary_making import ItineraryCandidateGenerator, ItineraryMakingData
+from chatbot.itinerary_making import (
+    ItineraryCandidateGenerator,
+    ItineraryMakingData,
+    ItineraryPlaceReference,
+)
 from chatbot.rag.rag_chain import get_chat_model
 from chatbot.semantic import (
     ConversationMessage,
@@ -92,6 +96,7 @@ class ChatOrchestrator:
         current_location: SemanticLocation | None = None,
         active_itinerary_id: str | None = None,
         active_itinerary_version: int | None = None,
+        prior_places: Sequence[ItineraryPlaceReference] = (),
     ) -> ChatOrchestratorResult:
         cleaned_question = question.strip()
         if not cleaned_question:
@@ -128,6 +133,7 @@ class ChatOrchestrator:
             current_location=current_location,
             active_itinerary_id=active_itinerary_id,
             active_itinerary_version=active_itinerary_version,
+            prior_places=prior_places,
         )
         started_at = perf_counter()
         execution_result = self._router.dispatch(context)
@@ -214,6 +220,7 @@ def orchestrate_chat(
     current_location: SemanticLocation | None = None,
     active_itinerary_id: str | None = None,
     active_itinerary_version: int | None = None,
+    prior_places: Sequence[ItineraryPlaceReference] = (),
     chat_model: Any | None = None,
     registry: ToolRegistry | None = None,
     semantic_interpreter: SemanticInterpreter | None = None,
@@ -259,6 +266,7 @@ def orchestrate_chat(
             current_location=current_location,
             active_itinerary_id=active_itinerary_id,
             active_itinerary_version=active_itinerary_version,
+            prior_places=prior_places,
         )
 
     with MapboxToolClient(authorization=authorization) as mapbox_client:
@@ -280,6 +288,7 @@ def orchestrate_chat(
             current_location=current_location,
             active_itinerary_id=active_itinerary_id,
             active_itinerary_version=active_itinerary_version,
+            prior_places=prior_places,
         )
 
 

@@ -24,21 +24,26 @@ dữ liệu địa điểm từ Mapbox. Dự án gồm ba ứng dụng chính:
 ```mermaid
 flowchart LR
     U[Người dùng] --> FE[Next.js Frontend]
-    FE -->|POST /api/chat| NP[Next.js API Proxy]
-    NP -->|POST /api/chat/| DJ[Django Chatbot Service]
+    FE --> NP[Next.js API Proxy]
 
-    DJ --> SI[Semantic Interpreter]
+    NP -->|Chat request kèm Bearer token| DJ[Django Chatbot Service]
+    DJ --> OR[ChatOrchestrator]
+    OR --> SI[SemanticInterpreter]
     SI --> GM[Google Gemini]
-    DJ --> OR[Chat Orchestrator]
-    OR --> RAG[RAG Tool]
+    OR --> RAG[RAG retrieval]
     RAG --> CH[(ChromaDB)]
-    OR --> NET[ASP.NET Core Backend]
-    NET --> MB[Mapbox Search API]
+    OR -->|Typed tool APIs| NET[ASP.NET Core Backend]
 
-    DJ -->|answer, sources, places| NP
+    NP -->|Auth, conversation, itinerary, speech token| NET
+    NET --> MB[Mapbox APIs]
+    NET --> DB[(MongoDB)]
+    NET --> LIVE[Gemini Live auth token]
+
+    OR --> OUT[ChatAPIView response:<br/>answer, sources, places,<br/>itinerary, itineraryOperation]
+    OUT --> NP
     NP --> FE
     FE --> MAP[Mapbox GL JS]
-    MAP --> MB
+    MAP -->|Public map token| MB
 ```
 
 ### Frontend
@@ -47,7 +52,8 @@ flowchart LR
 
 - Hiển thị giao diện chat, nguồn tham khảo và thông tin địa điểm.
 - Gửi request qua Next.js API route thay vì gọi Django trực tiếp từ trình duyệt.
-- Lưu tối đa ba lượt hỏi đáp gần nhất trong `localStorage`.
+- Gửi tối đa ba lượt hỏi đáp gần nhất làm context cho mỗi chat request.
+- Lưu, mở và xóa conversation của tài khoản qua ASP.NET Core và MongoDB.
 - Thu âm từ microphone và đưa transcript tiếng Việt vào ô soạn thảo để người dùng
   kiểm tra, chỉnh sửa rồi chủ động gửi.
 - Xin quyền truy cập GPS khi chatbot cần vị trí hiện tại.
@@ -72,6 +78,9 @@ flowchart LR
 - Reverse geocoding từ tọa độ.
 - Xác minh danh sách ứng viên địa điểm.
 - Lấy chi tiết các POI theo lô.
+- Đăng ký, đăng nhập và xác thực JWT.
+- Lưu conversation và itinerary theo người dùng trong MongoDB.
+- Tối ưu route và cập nhật có version khi thêm điểm dừng vào itinerary.
 - Cấp ephemeral token một lần dùng cho phiên speech-to-text với Gemini Live.
 
 Mapbox server token được giữ tại ASP.NET Core. Frontend chỉ sử dụng public token
@@ -94,7 +103,10 @@ flowchart LR
     SPLIT --> EMBED[Gemini Embeddings]
     EMBED --> SYNC[Đồng bộ vector]
     SYNC --> CHROMA[(ChromaDB)]
-    CHROMA --> RETRIEVE[Truy xuất khi chatbot gọi RAG]
+    QUESTION[Câu hỏi cần kiến thức du lịch] --> RETRIEVE[Vector search k=5]
+    CHROMA --> RETRIEVE
+    RETRIEVE --> EVIDENCE[Knowledge Base evidence cho handler]
+    EVIDENCE --> ANSWER[Gemini tổng hợp câu trả lời]
 ```
 
 Chạy lại `python manage.py ingest_knowledge` khi thêm, sửa hoặc xóa tài liệu.
@@ -108,7 +120,7 @@ tự lập plan, chạy tool/pipeline và gắn evidence policy.
 ```mermaid
 flowchart TD
     U[Người dùng gửi câu hỏi] --> API[Next.js proxy đến ChatAPIView]
-    API --> VALIDATE[Kiểm tra message, history, current_location]
+    API --> VALIDATE[Kiểm tra message, history, GPS,<br/>suggested_places và active itinerary]
     VALIDATE --> SEMANTIC[SemanticInterpreter phân tích bằng Gemini]
     SEMANTIC --> GPS{Cần vị trí hiện tại<br/>nhưng chưa có tọa độ?}
 
@@ -123,8 +135,10 @@ flowchart TD
     EXEC --> COMPOSER[AnswerComposer]
     ROUTER -->|needs_clarification/unsupported| COMPOSER
     COMPOSER --> PROJECTOR[ResponseProjector]
-    PROJECTOR --> RESPONSE[answer, sources, places, itinerary]
-    RESPONSE --> UI[Frontend hiển thị chat và bản đồ]
+    PROJECTOR --> RESPONSE[answer, sources, places,<br/>itinerary, itineraryOperation]
+    RESPONSE --> UI[Frontend hiển thị chat, POI và route]
+    UI --> SAVE[Lưu lượt hoàn chỉnh qua conversation API]
+    SAVE --> MONGO[(MongoDB)]
 ```
 
 12 handler được đăng ký tại `chatbot/intent_routing/factory.py`; registry kiểm tra
@@ -162,13 +176,16 @@ Hai intent này ưu tiên dữ liệu Mapbox. Knowledge Base chỉ bổ sung b�
 ```mermaid
 flowchart TD
     START{Intent}
-    START -->|place_search| SEARCH_ACTION{Action tìm kiếm}
+    START -->|place_search| SEARCH_ACTION{Action Mapbox}
+    START -->|place_details| DETAILS_ACTION{Action Mapbox}
     START -->|place_details| RAG_DETAILS[Truy xuất RAG bổ sung]
-    RAG_DETAILS --> NAMED[Forward search địa điểm cụ thể]
 
-    SEARCH_ACTION -->|find_named_place| NAMED
+    SEARCH_ACTION -->|find_named_place| NAMED[Mapbox forward search]
     SEARCH_ACTION -->|discover_places| ANCHOR{Đã có tọa độ vùng?}
     SEARCH_ACTION -->|reverse_geocode| REVERSE[Mapbox reverse lookup]
+    DETAILS_ACTION -->|find_named_place| NAMED
+    DETAILS_ACTION -->|discover_places| ANCHOR
+    DETAILS_ACTION -->|Thiếu action Mapbox nhưng có địa danh| NAMED
 
     ANCHOR -->|Chưa có| RESOLVE_AREA[Forward search địa danh làm mốc]
     ANCHOR -->|Đã có| CATEGORY[Mapbox category search]
@@ -187,8 +204,8 @@ flowchart TD
 ### 5. Nhóm intent tư vấn dựa trên RAG
 
 Nhóm này gồm `travel_qa`, `itinerary_advice`, `transportation_qa` và
-`budget_qa`. `itinerary_advice` chỉ tư vấn lịch trình dạng văn bản; hệ thống hiện
-không lưu lịch trình hoặc tính route.
+`budget_qa`. Riêng `itinerary_advice` chỉ tư vấn lịch trình dạng văn bản; yêu cầu
+tạo và lưu route được định tuyến sang `itinerary_making`.
 
 ```mermaid
 flowchart LR
@@ -209,7 +226,63 @@ flowchart LR
     ANSWER --> RESPONSE[answer và sources]
 ```
 
-### 6. Intent phụ thuộc hội thoại và intent không dùng tool
+### 6. Intent `itinerary_making`
+
+Luồng này tạo lịch trình có từ 2 đến 12 điểm dừng đã xác minh. Nếu người dùng yêu
+cầu tạo lịch trình từ danh sách vừa được gợi ý, frontend gửi lại tối đa 12
+`suggested_places` có `mapboxId` và tọa độ; pipeline tái sử dụng các POI đó thay vì
+để Gemini sinh lại tên địa điểm.
+
+```mermaid
+flowchart TD
+    I[itinerary_making + make_itinerary] --> RAG[Truy xuất Knowledge Base]
+    I --> DEST{Đã có tọa độ điểm đến?}
+    DEST -->|Chưa có| FORWARD[Mapbox forward search điểm đến]
+    DEST -->|Đã có| SOURCE{Có suggested_places<br/>từ câu trả lời trước?}
+    FORWARD --> SOURCE
+
+    SOURCE -->|Có| REUSE[Tái sử dụng POI đã có<br/>mapboxId và tọa độ]
+    SOURCE -->|Không| GENERATE[Gemini sinh ứng viên địa điểm]
+    GENERATE --> LIMIT[Chọn tối đa 12 ứng viên]
+    LIMIT --> VERIFY[Mapbox resolve candidates theo batch]
+    REUSE --> DEDUPE[Khử trùng lặp và yêu cầu 2-12 điểm]
+    VERIFY --> DEDUPE
+
+    DEDUPE --> CREATE[Tool create_itinerary gọi ASP.NET Core]
+    CREATE --> OPTIMIZE[Mapbox Optimization sắp thứ tự và tạo route]
+    OPTIMIZE --> PERSIST[Lưu itinerary version 1 vào MongoDB]
+    PERSIST --> RESPONSE[Trả itinerary và create_itinerary success]
+    RESPONSE --> UI[Hiển thị danh sách điểm dừng,<br/>marker đánh số và đường route]
+```
+
+Nếu không xác minh đủ hai điểm, tối ưu route thất bại hoặc MongoDB không lưu được,
+response không chứa một itinerary giả hay route tự suy diễn.
+
+### 7. Intent `itinerary_management`
+
+Runtime hiện hỗ trợ thao tác `add_itinerary_stop`; các thao tác xóa, thay thế hoặc
+sắp xếp lại chưa đi qua pipeline quản lý này.
+
+```mermaid
+flowchart TD
+    I[itinerary_management] --> ACTION{Action có phải<br/>add_itinerary_stop?}
+    ACTION -->|Không| UNSUPPORTED[unsupported_itinerary_operation]
+    ACTION -->|Có| ACTIVE{Có active itinerary<br/>id và version?}
+    ACTIVE -->|Không| MISSING[missing_active_itinerary]
+    ACTIVE -->|Có| GET[Đọc itinerary hiện tại từ MongoDB]
+    GET --> VERSION{Version còn khớp?}
+    VERSION -->|Không| CONFLICT[version_conflict]
+    VERSION -->|Có| RESOLVE[Mapbox xác minh duy nhất<br/>địa điểm cần thêm]
+    RESOLVE --> DUPLICATE{Đã có cùng mapboxId?}
+    DUPLICATE -->|Có| DUP[duplicate_stop]
+    DUPLICATE -->|Không| ADD[POST thêm điểm với expectedVersion]
+    ADD --> OPTIMIZE[Mapbox tối ưu lại toàn bộ route]
+    OPTIMIZE --> UPDATE[Cập nhật có điều kiện và tăng version trong MongoDB]
+    UPDATE --> RESPONSE[Trả itinerary mới và add_itinerary_stop success]
+    RESPONSE --> UI[Frontend thay route và marker]
+```
+
+### 8. Intent phụ thuộc hội thoại và intent không dùng tool
 
 ```mermaid
 flowchart TD
@@ -231,42 +304,44 @@ flowchart TD
     ANSWER --> RESPONSE[Trả response cho frontend]
 ```
 
-`unsupported_capability` áp dụng cho yêu cầu chưa được hỗ trợ như chỉ đường trực
-tiếp, giao thông thời gian thực hoặc lưu dữ liệu người dùng.
+`unsupported_capability` áp dụng cho yêu cầu chưa được hỗ trợ như điều hướng từng
+chặng theo thời gian thực, dữ liệu giao thông trực tiếp hoặc thao tác itinerary ngoài
+phạm vi đang triển khai.
 
-### 7. Quản lý context hội thoại
+### 9. Quản lý context và lưu hội thoại
 
-Ứng dụng giữ context ở frontend để Django tiếp tục stateless, không tạo Django
-Session, bảng hội thoại hoặc migration. Một lượt hội thoại gồm một câu hỏi của người
-dùng và một câu trả lời của trợ lý; tối đa ba lượt hoàn chỉnh, tương đương sáu message
-`user`/`assistant`, được lưu bằng key `travel_chat_messages` trong `localStorage`.
+Django vẫn xử lý từng request theo kiểu stateless. Frontend giữ hội thoại đang mở
+trong state, gửi tối đa ba lượt hoàn chỉnh gần nhất làm `history`, rồi lưu mỗi lượt
+đã hoàn thành qua ASP.NET Core vào MongoDB theo tài khoản đăng nhập.
 
 ```mermaid
-flowchart LR
-    LOAD[Mở ứng dụng] --> RESTORE[Khôi phục tối đa 3 lượt từ localStorage]
-    INPUT[Người dùng gửi câu hỏi mới] --> HISTORY[Lấy các lượt đã hoàn chỉnh trước đó]
-    HISTORY --> TRIM[Giới hạn 6 message user/assistant]
-    TRIM --> NEXT[Next.js POST /api/chat]
-    NEXT --> VALIDATE[Next.js và Django kiểm tra history]
-    VALIDATE --> SEMANTIC[Gemini phân tích intent và giải tham chiếu]
-    VALIDATE --> ANSWER[Gemini tạo câu trả lời với context]
-    ANSWER --> COMPLETE[Thêm câu trả lời hoàn chỉnh]
-    COMPLETE --> SAVE[Cắt còn 3 lượt và lưu localStorage]
-    NEW[Cuộc trò chuyện mới] --> CLEAR[Xóa state và travel_chat_messages]
+flowchart TD
+    LOGIN[Người dùng đăng nhập] --> COOKIE[Next.js giữ JWT trong HttpOnly cookie]
+    COOKIE --> LIST[GET danh sách conversation và itinerary mới nhất]
+    LIST --> OPEN{Mở conversation đã lưu?}
+    OPEN -->|Có| RESTORE[Khôi phục messages, sources,<br/>places và itinerary từ MongoDB]
+    OPEN -->|Không| EMPTY[Khởi tạo state hội thoại mới]
+
+    INPUT[Người dùng gửi câu hỏi] --> HISTORY[Lấy tối đa 3 lượt hoàn chỉnh gần nhất]
+    HISTORY --> CONTEXT[Đính kèm active itinerary và<br/>suggested_places khi phù hợp]
+    CONTEXT --> CHAT[POST /api/chat qua Next.js]
+    CHAT --> ANSWER[Django trả lời bằng history hiện tại]
+    ANSWER --> COMPLETE{Đã có đủ user + assistant?}
+    COMPLETE -->|Có| SAVE[Create conversation hoặc append turn]
+    SAVE --> MONGO[(MongoDB)]
+    SAVE --> SIDEBAR[Cập nhật danh sách conversation]
+
+    NEW[Cuộc trò chuyện mới] --> EMPTY
+    DELETE[Xóa conversation] --> MONGO
 ```
 
-Message người dùng đang chờ phản hồi không được lưu và câu hỏi hiện tại không bị lặp
-trong `history`. Next.js và Django cùng từ chối history vượt quá sáu message; mỗi
-`content` phía Django có giới hạn 4.000 ký tự. `SemanticInterpreter` dùng history để
-hiểu câu hỏi nối tiếp, còn `AnswerComposer` chuyển đúng thứ tự thành
-`HumanMessage`/`AIMessage` trước khi thêm câu hỏi hiện tại.
+Message người dùng đang chờ phản hồi không được đưa vào `history`; câu hỏi hiện tại
+không bị lặp lại. Next.js và Django cùng từ chối history vượt quá sáu message, và
+`SemanticInterpreter` dùng history để giải tham chiếu trước khi router chọn handler.
+Tọa độ GPS và audio microphone không được lưu trong conversation. Nút **Cuộc trò
+chuyện mới** chỉ xóa state đang mở; xóa một conversation đã lưu là thao tác API riêng.
 
-Khi tải lại trang, dữ liệu hợp lệ được khôi phục; JSON hỏng hoặc trường không hợp lệ
-được bỏ qua để UI vẫn hoạt động. Frontend chỉ lưu nội dung hội thoại và nguồn tham
-khảo cần thiết, không lưu tọa độ GPS hay audio microphone. Nút **Cuộc trò chuyện
-mới** xóa cả state trong bộ nhớ và dữ liệu hội thoại đã lưu.
-
-### 8. Speech-to-text với Gemini Live
+### 10. Speech-to-text với Gemini Live
 
 Speech-to-text dùng model `gemini-3.5-transcribe-live`, chế độ `SMART` cho tiếng Việt
 `vi-VN`. API key Gemini Live chỉ nằm ở ASP.NET Core; browser nhận ephemeral token
@@ -277,9 +352,9 @@ flowchart LR
     MIC[Người dùng bấm Nói] --> PERMISSION[Trình duyệt xin quyền microphone]
     PERMISSION --> WORKLET[AudioWorklet chuyển âm thanh thành PCM16 mono 16 kHz]
 
-    FE[Frontend] -->|POST /api/speech-token| NEXT[Next.js proxy]
-    NEXT -->|POST /api/speech/ephemeral-token| NET[ASP.NET Core]
-    NET -->|API key server-side| TOKEN[Gemini v1alpha auth_tokens]
+    FE[Frontend đã đăng nhập] -->|POST /api/speech-token| NEXT[Next.js proxy]
+    NEXT -->|Bearer token| NET[ASP.NET Core]
+    NET -->|API key server-side, POST auth_tokens| TOKEN[Gemini v1alpha]
     TOKEN -->|Ephemeral token một lần dùng| FE
 
     WORKLET -->|Chunk 100 ms qua WebSocket| LIVE[Gemini Live]
@@ -299,19 +374,25 @@ dùng có thể dừng cả khi bước khởi tạo còn chờ; ứng dụng s�
 `AudioContext` và media track khi kết thúc hoặc hủy. Transcript được nối vào nội dung
 đang có trong composer, không tự gửi, không phát lại bằng TTS và không lưu audio.
 
-### 9. Luồng hiển thị kết quả trên frontend
+### 11. Luồng hiển thị kết quả trên frontend
 
 ```mermaid
-flowchart LR
-    RESPONSE[answer, sources, places] --> CHAT[Hiển thị câu trả lời và nguồn]
-    RESPONSE --> VALID[Kiểm tra mapboxId và tọa độ]
-    VALID --> MARKER[Tạo marker trên Mapbox GL]
-    MARKER --> HOVER[Hover thẻ làm nổi bật marker]
-    MARKER --> CLICK[Click thẻ đưa bản đồ đến địa điểm]
-    RESPONSE --> HISTORY[Lưu tối đa 3 lượt hỏi đáp]
+flowchart TD
+    RESPONSE[answer, sources, places,<br/>itinerary, itineraryOperation] --> VALIDATE[Kiểm tra runtime contract]
+    VALIDATE --> CHAT[Hiển thị câu trả lời, nguồn và thẻ POI]
+    VALIDATE --> PLACES{Có places hợp lệ?}
+    PLACES -->|Có| MARKER[Tạo marker POI trên Mapbox GL]
+    MARKER --> INTERACT[Hover làm nổi bật;<br/>click để focus bản đồ]
+    VALIDATE --> ROUTE{Có persisted itinerary hợp lệ?}
+    ROUTE -->|Có| LINE[Vẽ GeoJSON LineString]
+    ROUTE -->|Có| STOP_MARKERS[Tạo marker điểm dừng đánh số]
+    LINE --> FIT[Fit bản đồ theo route và các điểm dừng]
+    STOP_MARKERS --> FIT
+    VALIDATE --> COMPLETE[Ghép lượt user + assistant hoàn chỉnh]
+    COMPLETE --> SAVE[Lưu conversation qua ASP.NET Core]
 ```
 
-Frontend không lưu tọa độ GPS chính xác vào `localStorage`.
+Frontend không lưu tọa độ GPS chính xác hoặc audio microphone vào conversation.
 
 ## Yêu cầu
 

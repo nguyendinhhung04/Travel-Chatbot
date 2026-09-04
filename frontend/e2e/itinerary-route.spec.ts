@@ -143,6 +143,67 @@ test("accepts an optimized itinerary and keeps it on a normal answer", async ({
   expect(requestCount).toBe(2);
 });
 
+test("sends places from the previous answer when creating a follow-up itinerary", async ({
+  page,
+}) => {
+  await page.route("**/api/itineraries", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "null" }),
+  );
+
+  const suggestedPlaces = [
+    { mapboxId: "mapbox.hon-da-bac", name: "Hon Da Bac", longitude: 104.75, latitude: 8.98 },
+    { mapboxId: "mapbox.uminh-ha", name: "U Minh Ha", longitude: 104.92, latitude: 9.25 },
+    { mapboxId: "mapbox.cho-noi-ca-mau", name: "Cho noi Ca Mau", longitude: 105.15, latitude: 9.18 },
+  ];
+  let requestCount = 0;
+  let followUpRequest: Record<string, unknown> | null = null;
+  await page.route("**/api/chat", async (route) => {
+    requestCount += 1;
+    if (requestCount === 2) {
+      followUpRequest = route.request().postDataJSON() as Record<string, unknown>;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        requestCount === 1
+          ? {
+              answer: "Ba dia diem o Ca Mau.",
+              sources: [],
+              places: suggestedPlaces,
+            }
+          : {
+              answer: "Da tao lich trinh tu cac dia diem vua goi y.",
+              sources: [],
+              places: [],
+              itinerary: {
+                ...itinerary,
+                destination: "Ca Mau",
+                stops: itinerary.stops.map((stop, index) => ({
+                  ...stop,
+                  ...suggestedPlaces[index],
+                  order: index + 1,
+                  inputIndex: index,
+                })).slice(0, 2),
+              },
+            },
+      ),
+    });
+  });
+
+  await page.goto("/");
+  const input = page.getByLabel("Câu hỏi du lịch");
+  const sendButton = page.getByRole("button", { name: "Gửi câu hỏi" });
+  await input.fill("Ca Mau co gi?");
+  await sendButton.click();
+  await expect(page.getByText("Ba dia diem o Ca Mau.")).toBeVisible();
+
+  await input.fill("Lên lịch trình với các địa điểm bạn vừa gợi ý");
+  await sendButton.click();
+  await expect(page.getByText("Da tao lich trinh tu cac dia diem vua goi y.")).toBeVisible();
+  expect(followUpRequest).toMatchObject({ suggested_places: suggestedPlaces });
+});
+
 test("loads an active itinerary and sends its id and version for add stop", async ({
   page,
 }) => {

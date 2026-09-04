@@ -11,6 +11,7 @@ from .orchestrator import orchestrate_chat
 from .llm_history import recent_complete_turns
 from .semantic import ConversationMessage, SemanticLocation
 from .serializers import ChatRequestSerializer
+from .itinerary_making import ItineraryPlaceReference
 
 
 logger = logging.getLogger(__name__)
@@ -40,12 +41,17 @@ class ChatAPIView(APIView):
         active_itinerary_version = serializer.validated_data.get(
             "active_itinerary_version"
         )
+        prior_places = tuple(
+            ItineraryPlaceReference.model_validate(item)
+            for item in serializer.validated_data.get("suggested_places", [])
+        )
         try:
             orchestrator_kwargs = {
                 "history": history,
                 "current_location": current_location,
                 "active_itinerary_id": active_itinerary_id,
                 "active_itinerary_version": active_itinerary_version,
+                "prior_places": prior_places,
             }
             authorization = request.headers.get("Authorization")
             if authorization:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from chatbot.intent import TravelIntent
-from chatbot.itinerary_making import ItineraryMakingData
+from chatbot.itinerary_making import ItineraryMakingData, ItineraryPlaceReference
 from chatbot.semantic import ConversationMessage, SemanticInterpretation, SemanticLocation
 from chatbot.tool_planner import PlannedToolCall
 from chatbot.tools.models import ItineraryData
@@ -23,6 +23,7 @@ class IntentContext:
     current_location: SemanticLocation | None = None
     active_itinerary_id: str | None = None
     active_itinerary_version: int | None = None
+    prior_places: tuple[ItineraryPlaceReference, ...] = ()
 
 
 @dataclass(frozen=True)

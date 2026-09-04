@@ -53,6 +53,30 @@ class CurrentLocationSerializer(serializers.Serializer):
         return attrs
 
 
+class SuggestedPlaceSerializer(serializers.Serializer):
+    mapboxId = serializers.CharField(
+        allow_blank=False,
+        max_length=256,
+        trim_whitespace=True,
+    )
+    name = serializers.CharField(
+        allow_blank=False,
+        max_length=200,
+        trim_whitespace=True,
+    )
+    longitude = serializers.FloatField(min_value=-180, max_value=180)
+    latitude = serializers.FloatField(min_value=-90, max_value=90)
+
+    def to_internal_value(self, data):
+        if isinstance(data, Mapping):
+            extra_fields = set(data) - {"mapboxId", "name", "longitude", "latitude"}
+            if extra_fields:
+                raise serializers.ValidationError(
+                    "suggested_places may contain only mapboxId, name, longitude and latitude."
+                )
+        return super().to_internal_value(data)
+
+
 class ChatRequestSerializer(serializers.Serializer):
     """Validate a stateless question plus optional conversation context."""
 
@@ -66,6 +90,11 @@ class ChatRequestSerializer(serializers.Serializer):
         max_length=6,
     )
     current_location = CurrentLocationSerializer(required=False)
+    suggested_places = SuggestedPlaceSerializer(
+        many=True,
+        required=False,
+        max_length=12,
+    )
     active_itinerary_id = serializers.RegexField(
         regex=r"^[0-9a-fA-F]{24}$",
         required=False,
