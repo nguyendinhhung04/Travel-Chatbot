@@ -22,14 +22,15 @@ public sealed class ItineraryService(
     IItineraryRepository repository,
     MapboxOptimizationTool optimizationTool)
 {
-    public const string DefaultUserId = "admin";
     private static readonly HashSet<string> SupportedProfiles =
         ["driving", "walking", "cycling"];
 
     public async Task<ItineraryOperationResult> CreateAsync(
+        string userId,
         CreateItineraryRequest request,
         CancellationToken cancellationToken)
     {
+        if (!ObjectId.TryParse(userId, out _)) return InvalidUser();
         var validationError = ValidateCreateRequest(request);
         if (validationError is not null)
         {
@@ -68,7 +69,7 @@ public sealed class ItineraryService(
         var itinerary = new ItineraryDocument
         {
             Id = ObjectId.GenerateNewId().ToString(),
-            UserId = DefaultUserId,
+            UserId = userId,
             Version = 1,
             Title = request.Title.Trim(),
             Destination = request.Destination.Trim(),
@@ -111,16 +112,17 @@ public sealed class ItineraryService(
     }
 
     public async Task<ItineraryOperationResult> GetAsync(
+        string userId,
         string id,
         CancellationToken cancellationToken)
     {
-        if (!ObjectId.TryParse(id, out _))
+        if (!ObjectId.TryParse(userId, out _) || !ObjectId.TryParse(id, out _))
         {
             return NotFound();
         }
         try
         {
-            var item = await repository.GetAsync(DefaultUserId, id, cancellationToken);
+            var item = await repository.GetAsync(userId, id, cancellationToken);
             return item is null ? NotFound() : new(item);
         }
         catch (Exception error) when (
@@ -131,11 +133,13 @@ public sealed class ItineraryService(
     }
 
     public async Task<ItineraryOperationResult> GetLatestAsync(
+        string userId,
         CancellationToken cancellationToken)
     {
+        if (!ObjectId.TryParse(userId, out _)) return InvalidUser();
         try
         {
-            var item = await repository.GetLatestAsync(DefaultUserId, cancellationToken);
+            var item = await repository.GetLatestAsync(userId, cancellationToken);
             return item is null ? NotFound() : new(item);
         }
         catch (Exception error) when (
@@ -146,11 +150,12 @@ public sealed class ItineraryService(
     }
 
     public async Task<ItineraryOperationResult> AddStopAsync(
+        string userId,
         string id,
         AddItineraryStopRequest request,
         CancellationToken cancellationToken)
     {
-        var currentResult = await GetAsync(id, cancellationToken);
+        var currentResult = await GetAsync(userId, id, cancellationToken);
         if (!currentResult.Success)
         {
             return currentResult;
@@ -272,6 +277,11 @@ public sealed class ItineraryService(
             "itinerary_not_found",
             "Không tìm thấy lịch trình.",
             StatusCodes.Status404NotFound);
+
+    private static ItineraryOperationResult InvalidUser() =>
+        ItineraryOperationResult.Failed(
+            "invalid_user", "User ID trong token không hợp lệ.",
+            StatusCodes.Status401Unauthorized);
 
     private static string? ValidateCreateRequest(CreateItineraryRequest request)
     {

@@ -1,5 +1,131 @@
 @import "tailwindcss";
 
+.auth-loading {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: var(--muted);
+}
+
+.auth-page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--page);
+}
+
+.auth-card {
+  width: min(100%, 440px);
+  padding: 38px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: 0 24px 70px rgba(42, 57, 85, 0.12);
+}
+
+.auth-card h1 {
+  margin: 8px 0;
+  font-size: 30px;
+}
+
+.auth-description {
+  margin: 0 0 26px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: grid;
+  gap: 16px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.auth-form input {
+  width: 100%;
+  padding: 12px 14px;
+  color: var(--ink);
+  background: #fbfcfe;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--soft-accent);
+}
+
+.auth-submit,
+.auth-toolbar button {
+  padding: 11px 16px;
+  color: white;
+  background: var(--accent);
+  border: 0;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.auth-submit:hover:not(:disabled),
+.auth-toolbar button:hover:not(:disabled) {
+  background: var(--accent-deep);
+}
+
+.auth-submit:disabled,
+.auth-toolbar button:disabled {
+  opacity: 0.65;
+}
+
+.auth-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 14px;
+}
+
+.auth-switch {
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.auth-switch a {
+  color: var(--accent-deep);
+  font-weight: 700;
+}
+
+.chat-page-content {
+  display: flex;
+  flex-direction: column;
+  width: min(1480px, 100%);
+  height: min(960px, 100%);
+  min-height: 0;
+  margin: auto;
+}
+
+.auth-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 0 2px 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.auth-toolbar button {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 :root {
   --ink: #17253d;
   --muted: #71809a;
@@ -92,6 +218,146 @@ textarea:disabled {
   border: 1px solid rgba(224, 231, 241, 0.95);
   border-radius: 28px;
   box-shadow: 0 24px 70px rgba(42, 57, 85, 0.14);
+}
+
+.workspace-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.conversation-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 18px 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(224, 231, 241, 0.95);
+  border-radius: 18px;
+}
+
+.conversation-history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.conversation-history-header h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.conversation-history-header button,
+.conversation-delete {
+  color: var(--accent-deep);
+  background: var(--soft-accent);
+  border: 0;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+.conversation-history-header button {
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.conversation-list {
+  display: grid;
+  gap: 7px;
+  padding-top: 12px;
+  overflow-y: auto;
+}
+
+.conversation-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 25px;
+  align-items: start;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+
+.conversation-item-active {
+  background: var(--soft-accent);
+  border-color: #ffd7ca;
+}
+
+.conversation-open {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.conversation-open strong,
+.conversation-open span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-open strong {
+  font-size: 13px;
+}
+
+.conversation-open span,
+.conversation-empty,
+.conversation-error {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.conversation-delete {
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  font-size: 17px;
+}
+
+.conversation-empty,
+.conversation-error {
+  margin: 14px 4px;
+  line-height: 1.45;
+}
+
+.conversation-error {
+  color: #b42318;
+}
+
+.persistence-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 28px 0;
+  padding: 10px 12px;
+  color: #8a271d;
+  background: #fff4f2;
+  border: 1px solid #ffd4ce;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.persistence-error button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  color: white;
+  background: var(--accent-deep);
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .experience-shell-dragging,
@@ -961,6 +1227,45 @@ textarea:disabled {
 .map-container .mapboxgl-ctrl button {
   width: 34px;
   height: 34px;
+}
+
+@media (max-width: 960px) {
+  .workspace-layout {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+
+  .conversation-history {
+    max-height: 170px;
+  }
+
+  .experience-shell {
+    min-height: 620px;
+  }
+}
+
+@media (max-width: 640px) {
+  .page-background {
+    padding: 10px;
+  }
+
+  .chat-page-content {
+    height: 100%;
+  }
+
+  .auth-toolbar {
+    padding-bottom: 8px;
+  }
+
+  .auth-toolbar span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .auth-card {
+    padding: 28px 22px;
+  }
 }
 
 .map-overlay {

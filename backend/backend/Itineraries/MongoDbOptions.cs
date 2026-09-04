@@ -13,4 +13,13 @@ public sealed class MongoDbOptions
 
     [Required]
     public string ItinerariesCollection { get; init; } = "itineraries";
+
+    [Required]
+    public string UsersCollection { get; init; } = "users";
+
+    [Required]
+    public string ConversationsCollection { get; init; } = "conversations";
+
+    [Required]
+    public string MessagesCollection { get; init; } = "messages";
 }

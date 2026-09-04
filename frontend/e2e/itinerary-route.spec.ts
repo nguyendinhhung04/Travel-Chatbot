@@ -49,8 +49,46 @@ const duplicateMapboxSources = [
   },
 ];
 
+const savedConversation = {
+  id: "507f1f77bcf86cd799439099",
+  title: "Saved itinerary",
+  lastMessagePreview: "Saved answer",
+  lastTurnIndex: 1,
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+};
+
+const savedConversationDetails = {
+  conversation: savedConversation,
+  messages: [],
+};
+
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.clear());
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ user: { id: "507f1f77bcf86cd799439014", email: "test@example.com", displayName: "Test User", createdAt: "2026-01-01T00:00:00Z" } }),
+    }),
+  );
+  await page.route("**/api/conversations", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+      return;
+    }
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify(savedConversationDetails),
+    });
+  });
+  await page.route("**/api/conversations/*/turns", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(savedConversationDetails),
+    }),
+  );
 });
 
 test("accepts an optimized itinerary and keeps it on a normal answer", async ({
@@ -83,9 +121,7 @@ test("accepts an optimized itinerary and keeps it on a normal answer", async ({
   });
 
   await page.goto("/");
-  await page.waitForFunction(
-    () => window.localStorage.getItem("travel_chat_messages") !== null,
-  );
+  await expect(page.getByLabel("Câu hỏi du lịch")).toBeVisible();
 
   const input = page.getByLabel("Câu hỏi du lịch");
   const sendButton = page.getByRole("button", { name: "Gửi câu hỏi" });

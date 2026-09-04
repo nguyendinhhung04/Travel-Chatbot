@@ -7,6 +7,7 @@ namespace Backend.Tests;
 
 public sealed class ItineraryServiceTests
 {
+    private const string UserId = "507f1f77bcf86cd799439014";
     [Fact]
     public async Task Create_OptimizesBeforeInsertAndStartsAtVersionOne()
     {
@@ -17,6 +18,7 @@ public sealed class ItineraryServiceTests
             new MapboxOptimizationTool(optimizationClient));
 
         var result = await service.CreateAsync(
+            UserId,
             new CreateItineraryRequest(
                 "HĂ  Ná»™i 3 ngĂ y 2 Ä‘Ăªm",
                 "HĂ  Ná»™i",
@@ -49,6 +51,7 @@ public sealed class ItineraryServiceTests
             new MapboxOptimizationTool(optimizationClient));
 
         var result = await service.CreateAsync(
+            UserId,
             new CreateItineraryRequest(
                 "HĂ  Ná»™i",
                 "HĂ  Ná»™i",
@@ -77,6 +80,7 @@ public sealed class ItineraryServiceTests
             new MapboxOptimizationTool(optimizationClient));
 
         var result = await service.CreateAsync(
+            UserId,
             new CreateItineraryRequest(
                 "HĂ  Ná»™i",
                 "HĂ  Ná»™i",
@@ -105,6 +109,7 @@ public sealed class ItineraryServiceTests
             new MapboxOptimizationTool(optimizationClient));
 
         var result = await service.AddStopAsync(
+            UserId,
             ItineraryId,
             new AddItineraryStopRequest(
                 new MapboxOptimizationStop("poi-yen-so", "Công viên Yên Sở", 105.88, 20.96),
@@ -137,6 +142,7 @@ public sealed class ItineraryServiceTests
                 new MapboxOptimizationTool(optimizationClient));
 
             var result = await service.AddStopAsync(
+                UserId,
                 ItineraryId,
                 request,
                 CancellationToken.None);
@@ -158,6 +164,7 @@ public sealed class ItineraryServiceTests
             new MapboxOptimizationTool(optimizationClient));
 
         var result = await service.AddStopAsync(
+            UserId,
             ItineraryId,
             new AddItineraryStopRequest(
                 new MapboxOptimizationStop("poi-new", "Điểm mới", 105.7, 21.2), 3),
@@ -173,7 +180,7 @@ public sealed class ItineraryServiceTests
     private static ItineraryDocument Current() => new()
     {
         Id = ItineraryId,
-        UserId = "admin",
+        UserId = UserId,
         Version = 3,
         Title = "Hà Nội 2 ngày 1 đêm",
         Destination = "Hà Nội",

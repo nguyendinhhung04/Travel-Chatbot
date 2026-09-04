@@ -13,6 +13,15 @@ class ConversationMessageSerializer(serializers.Serializer):
         trim_whitespace=True,
     )
 
+    def to_internal_value(self, data):
+        if isinstance(data, Mapping):
+            extra_fields = set(data) - {"role", "content"}
+            if extra_fields:
+                raise serializers.ValidationError(
+                    "history messages may contain only role and content."
+                )
+        return super().to_internal_value(data)
+
 
 class CurrentLocationSerializer(serializers.Serializer):
     near = serializers.CharField(

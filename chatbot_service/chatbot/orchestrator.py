@@ -222,6 +222,7 @@ def orchestrate_chat(
     max_tool_calls: int | None = None,
     router: IntentRouter | None = None,
     place_details_loader: PlaceDetailsLoader | None = None,
+    authorization: str | None = None,
 ) -> ChatOrchestratorResult:
     """Run one stateless request and close owned HTTP resources."""
     active_model = chat_model or get_chat_model(thinking_level="medium")
@@ -260,7 +261,7 @@ def orchestrate_chat(
             active_itinerary_version=active_itinerary_version,
         )
 
-    with MapboxToolClient() as mapbox_client:
+    with MapboxToolClient(authorization=authorization) as mapbox_client:
         active_registry = ToolRegistry(mapbox_client)
         return ChatOrchestrator(
             active_model,

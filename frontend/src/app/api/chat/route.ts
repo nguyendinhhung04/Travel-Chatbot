@@ -1,9 +1,9 @@
 import type { ChatErrorResponse } from "@/types/chat";
+import { getAuthorizationHeader, unauthorizedResponse } from "@/lib/auth-proxy";
+import { getRecentCompleteTurns } from "@/utils/llm-history";
 
 const INVALID_MESSAGE = "Vui lòng nhập một câu hỏi du lịch.";
 const CONNECTION_ERROR = "Không thể kết nối đến máy chủ chatbot.";
-
-const MAX_HISTORY_MESSAGES = 6;
 
 type HistoryMessage = {
   role: "user" | "assistant";
@@ -24,6 +24,7 @@ function isHistoryMessage(value: unknown): value is HistoryMessage {
 
   const historyMessage = value as Partial<HistoryMessage>;
   return (
+    Object.keys(historyMessage).every((key) => key === "role" || key === "content") &&
     (historyMessage.role === "user" || historyMessage.role === "assistant") &&
     typeof historyMessage.content === "string" &&
     historyMessage.content.trim().length > 0
@@ -31,6 +32,9 @@ function isHistoryMessage(value: unknown): value is HistoryMessage {
 }
 
 export async function POST(request: Request) {
+  const authorization = await getAuthorizationHeader();
+  if (!authorization) return unauthorizedResponse();
+
   let body: unknown;
 
   try {
@@ -55,12 +59,12 @@ export async function POST(request: Request) {
   if (
     historyValue !== undefined &&
     (!Array.isArray(historyValue) ||
-      historyValue.length > MAX_HISTORY_MESSAGES ||
+      historyValue.length > 6 ||
       !historyValue.every(isHistoryMessage))
   ) {
     return errorResponse("Invalid chat history.", 400);
   }
-  const history = (historyValue ?? []) as HistoryMessage[];
+  const history = getRecentCompleteTurns((historyValue ?? []) as HistoryMessage[]);
 
   const activeItineraryId =
     typeof body === "object" && body !== null && "active_itinerary_id" in body
@@ -127,7 +131,10 @@ export async function POST(request: Request) {
   try {
     const upstream = await fetch(`${backendUrl.replace(/\/$/, "")}/api/chat/`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authorization,
+      },
       body: JSON.stringify({
         message: message.trim(),
         history,

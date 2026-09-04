@@ -107,5 +107,34 @@ export type ChatMessage = {
   content: string;
   sources?: ChatSource[];
   places?: ChatPlace[];
+  itinerary?: ChatItinerary | null;
   recommendations?: PlaceRecommendation[];
+};
+
+export type ConversationSummary = {
+  id: string;
+  title: string;
+  lastMessagePreview: string;
+  lastTurnIndex: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PersistedConversationMessage = {
+  id: string;
+  conversationId: string;
+  userId: string;
+  turnId: string;
+  turnIndex: number;
+  role: "user" | "assistant";
+  content: string;
+  sources?: ChatSource[];
+  places?: ChatPlace[];
+  itinerary?: ChatItinerary | null;
+  createdAt: string;
+};
+
+export type ConversationDetailsResponse = {
+  conversation: ConversationSummary;
+  messages: PersistedConversationMessage[];
 };

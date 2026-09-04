@@ -1,9 +1,11 @@
 using Backend.Speech;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Backend.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/speech")]
 [Produces("application/json")]
 public sealed class SpeechController(IGeminiEphemeralTokenClient tokenClient) : ControllerBase

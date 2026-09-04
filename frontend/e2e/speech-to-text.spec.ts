@@ -1,16 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function openHydratedApp(page: Page) {
-  await page.goto("/");
-  await page.waitForFunction(
-    () => window.localStorage.getItem("travel_chat_messages") !== null,
-  );
+  await page.goto("/chat");
+  await expect(page.getByLabel("Câu hỏi du lịch")).toBeVisible({ timeout: 15_000 });
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ user: { id: "507f1f77bcf86cd799439014", email: "test@example.com", displayName: "Test User", createdAt: "2026-01-01T00:00:00Z" } }),
+    }),
+  );
+  await page.route("**/api/itineraries", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "null" }),
+  );
   await page.addInitScript(() => {
-    window.localStorage.clear();
-
     class FakeNode {
       connect(target: unknown) {
         return target;
@@ -128,13 +134,18 @@ test.beforeEach(async ({ page }) => {
       },
     });
     Object.assign(window, {
-      AudioContext: FakeAudioContext,
-      webkitAudioContext: FakeAudioContext,
-      AudioWorkletNode: FakeAudioWorkletNode,
-      WebSocket: FakeWebSocket,
       __speechMessages: [],
       __delaySpeechSetup: false,
     });
+    // Do not replace WebSocket before Next.js and AuthGate finish hydrating.
+    window.setTimeout(() => {
+      Object.assign(window, {
+        AudioContext: FakeAudioContext,
+        webkitAudioContext: FakeAudioContext,
+        AudioWorkletNode: FakeAudioWorkletNode,
+        WebSocket: FakeWebSocket,
+      });
+    }, 1_000);
   });
 });
 

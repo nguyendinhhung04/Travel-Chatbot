@@ -1,7 +1,14 @@
 using Backend.Chatbot.Tools.Mapbox;
+using Backend.Auth;
+using Backend.Conversations;
 using Backend.Itineraries;
 using Backend.Mapbox;
 using Backend.Speech;
+using Backend.Users;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using MongoDB.Driver;
 using Microsoft.OpenApi;
 using Microsoft.Extensions.Options;
@@ -11,6 +18,16 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 
 builder.Services.AddControllers();
+builder.Services
+    .AddOptions<JwtOptions>()
+    .Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(
+        options => !string.IsNullOrWhiteSpace(options.SigningKey),
+        "Jwt:SigningKey là cấu hình bắt buộc.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<IPasswordHasher<UserDocument>, PasswordHasher<UserDocument>>();
+builder.Services.AddAuthorization();
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
@@ -77,6 +94,80 @@ builder.Services
     .AddOptions<MongoDbOptions>()
     .Bind(builder.Configuration.GetSection(MongoDbOptions.SectionName))
     .ValidateDataAnnotations();
+
+var configuredMongo = builder.Configuration
+    .GetSection(MongoDbOptions.SectionName)
+    .Get<MongoDbOptions>();
+if (!string.IsNullOrWhiteSpace(configuredMongo?.ConnectionString))
+{
+    builder.Services.AddSingleton<IMongoClient>(services =>
+    {
+        var options = services.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+        var settings = MongoClientSettings.FromConnectionString(options.ConnectionString);
+        settings.ServerApi = new ServerApi(ServerApiVersion.V1);
+        return new MongoClient(settings);
+    });
+    builder.Services.AddSingleton<IMongoDatabase>(services =>
+    {
+        var options = services.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+        return services
+            .GetRequiredService<IMongoClient>()
+            .GetDatabase(options.DatabaseName);
+    });
+    builder.Services.AddSingleton<MongoDbIndexes>();
+}
+
+builder.Services.AddSingleton<IUserRepository>(services =>
+{
+    var options = services.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(options.ConnectionString))
+    {
+        return new UnavailableUserRepository();
+    }
+    return new MongoUserRepository(
+        services.GetRequiredService<IMongoDatabase>(),
+        services.GetRequiredService<MongoDbIndexes>(),
+        Options.Create(options));
+});
+builder.Services.AddSingleton<IConversationRepository>(services =>
+{
+    var options = services.GetRequiredService<IOptions<MongoDbOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(options.ConnectionString))
+    {
+        return new UnavailableConversationRepository();
+    }
+    return new MongoConversationRepository(
+        services.GetRequiredService<IMongoClient>(),
+        services.GetRequiredService<IMongoDatabase>(),
+        services.GetRequiredService<MongoDbIndexes>(),
+        Options.Create(options));
+});
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<ConversationService>();
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        var jwt = builder.Configuration
+            .GetSection(JwtOptions.SectionName)
+            .Get<JwtOptions>() ?? new JwtOptions();
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwt.Issuer,
+            ValidateAudience = true,
+            ValidAudience = jwt.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey)),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30)
+        };
+    });
+
 builder.Services.AddSingleton<IItineraryRepository>(services =>
 {
     var options = services.GetRequiredService<IOptions<MongoDbOptions>>().Value;
@@ -84,10 +175,9 @@ builder.Services.AddSingleton<IItineraryRepository>(services =>
     {
         return new UnavailableItineraryRepository();
     }
-    var settings = MongoClientSettings.FromConnectionString(options.ConnectionString);
-    settings.ServerApi = new ServerApi(ServerApiVersion.V1);
     return new MongoItineraryRepository(
-        new MongoClient(settings),
+        services.GetRequiredService<IMongoDatabase>(),
+        services.GetRequiredService<MongoDbIndexes>(),
         Options.Create(options));
 });
 builder.Services.AddScoped<ItineraryService>();
@@ -119,6 +209,7 @@ if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 }
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

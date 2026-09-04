@@ -52,6 +52,24 @@ def persisted_itinerary_payload(*, version: int):
 
 
 class MapboxToolClientTests(SimpleTestCase):
+    def test_forwards_authorization_header_to_dotnet_tools(self):
+        captured = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured
+            captured = request.headers.get("authorization")
+            return httpx.Response(200, json=PLACE_SUCCESS_RESPONSE)
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+            result = MapboxToolClient(
+                base_url="http://tools.test",
+                authorization="Bearer user-token",
+                http_client=http_client,
+            ).forward_search(MapboxForwardSearchInput(q="coffee"))
+
+        self.assertTrue(result.success)
+        self.assertEqual(captured, "Bearer user-token")
+
     def test_itinerary_create_posts_persistence_contract(self):
         captured = None
 
@@ -91,7 +109,7 @@ class MapboxToolClientTests(SimpleTestCase):
         self.assertEqual(result.data.version, 1)
         self.assertEqual(
             captured[:2],
-            ("POST", "/api/users/admin/itineraries"),
+            ("POST", "/api/itineraries"),
         )
         self.assertEqual(captured[2]["durationDays"], 2)
         self.assertEqual(captured[2]["stops"][0]["mapboxId"], "poi-a")
@@ -124,7 +142,7 @@ class MapboxToolClientTests(SimpleTestCase):
         self.assertEqual(result.data.version, 4)
         self.assertEqual(
             captured[:2],
-            ("POST", "/api/users/admin/itineraries/507f1f77bcf86cd799439011/stops"),
+            ("POST", "/api/itineraries/507f1f77bcf86cd799439011/stops"),
         )
         self.assertEqual(captured[2]["expectedVersion"], 3)
 

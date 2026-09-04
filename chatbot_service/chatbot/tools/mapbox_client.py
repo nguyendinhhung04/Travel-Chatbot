@@ -51,6 +51,7 @@ class MapboxToolClient:
         base_url: str | None = None,
         timeout_seconds: float | None = None,
         http_client: httpx.Client | None = None,
+        authorization: str | None = None,
     ) -> None:
         self._base_url = (
             base_url or settings.MAPBOX_TOOL_BASE_URL
@@ -60,6 +61,7 @@ class MapboxToolClient:
             if timeout_seconds is not None
             else settings.MAPBOX_TOOL_TIMEOUT_SECONDS
         )
+        self._authorization = authorization.strip() if authorization else None
         self._owns_http_client = http_client is None
         self._http_client = http_client or httpx.Client()
 
@@ -125,9 +127,9 @@ class MapboxToolClient:
 
     def get_itinerary(self, request: ItineraryGetInput) -> ToolResult[ItineraryData]:
         endpoint = (
-            f"/api/users/admin/itineraries/{request.itinerary_id}"
+            f"/api/itineraries/{request.itinerary_id}"
             if request.itinerary_id
-            else "/api/users/admin/itineraries/latest"
+            else "/api/itineraries/latest"
         )
         return self._itinerary_request("GET", endpoint)
 
@@ -137,7 +139,7 @@ class MapboxToolClient:
     ) -> ToolResult[ItineraryData]:
         return self._itinerary_request(
             "POST",
-            "/api/users/admin/itineraries",
+            "/api/itineraries",
             request.model_dump(mode="json", by_alias=True),
         )
 
@@ -147,7 +149,7 @@ class MapboxToolClient:
     ) -> ToolResult[ItineraryData]:
         return self._itinerary_request(
             "POST",
-            f"/api/users/admin/itineraries/{request.itinerary_id}/stops",
+            f"/api/itineraries/{request.itinerary_id}/stops",
             {
                 "stop": request.stop.model_dump(mode="json", by_alias=True),
                 "expectedVersion": request.expected_version,
@@ -176,7 +178,7 @@ class MapboxToolClient:
             response = self._http_client.post(
                 url,
                 json=payload,
-                headers={"Accept": "application/json"},
+                headers=self._headers(),
                 timeout=self._timeout_seconds,
             )
         except httpx.TimeoutException:
@@ -222,7 +224,7 @@ class MapboxToolClient:
                 method,
                 f"{self._base_url}{endpoint}",
                 json=payload,
-                headers={"Accept": "application/json"},
+                headers=self._headers(),
                 timeout=self._timeout_seconds,
             )
         except httpx.TimeoutException:
@@ -270,6 +272,12 @@ class MapboxToolClient:
             error_code=error_code,
             error_message=error_message,
         )
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Accept": "application/json"}
+        if self._authorization:
+            headers["Authorization"] = self._authorization
+        return headers
 
     @staticmethod
     def _failure(

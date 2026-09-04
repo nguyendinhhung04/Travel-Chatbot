@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .orchestrator import orchestrate_chat
+from .llm_history import recent_complete_turns
 from .semantic import ConversationMessage, SemanticLocation
 from .serializers import ChatRequestSerializer
 
@@ -25,10 +26,10 @@ class ChatAPIView(APIView):
         serializer.is_valid(raise_exception=True)
 
         message = serializer.validated_data["message"]
-        history = tuple(
+        history = recent_complete_turns(tuple(
             ConversationMessage.model_validate(item)
             for item in serializer.validated_data.get("history", [])
-        )
+        ))
         location_data = serializer.validated_data.get("current_location")
         current_location = (
             SemanticLocation.model_validate(location_data)
@@ -40,13 +41,16 @@ class ChatAPIView(APIView):
             "active_itinerary_version"
         )
         try:
-            result = orchestrate_chat(
-                message,
-                history=history,
-                current_location=current_location,
-                active_itinerary_id=active_itinerary_id,
-                active_itinerary_version=active_itinerary_version,
-            )
+            orchestrator_kwargs = {
+                "history": history,
+                "current_location": current_location,
+                "active_itinerary_id": active_itinerary_id,
+                "active_itinerary_version": active_itinerary_version,
+            }
+            authorization = request.headers.get("Authorization")
+            if authorization:
+                orchestrator_kwargs["authorization"] = authorization
+            result = orchestrate_chat(message, **orchestrator_kwargs)
         except OutputParserException:
             logger.exception("Travel chatbot semantic interpretation failed")
             return Response(

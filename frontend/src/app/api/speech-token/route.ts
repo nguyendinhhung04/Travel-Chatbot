@@ -1,8 +1,13 @@
+import { getAuthorizationHeader, unauthorizedResponse } from "@/lib/auth-proxy";
+
 const CONNECTION_ERROR = "Không thể khởi tạo nhận dạng giọng nói.";
 
 export const dynamic = "force-dynamic";
 
 export async function POST() {
+  const authorization = await getAuthorizationHeader();
+  if (!authorization) return unauthorizedResponse();
+
   const backendUrl = process.env.DOTNET_BACKEND_URL;
   if (!backendUrl) {
     return Response.json(
@@ -16,7 +21,7 @@ export async function POST() {
       `${backendUrl.replace(/\/$/, "")}/api/speech/ephemeral-token`,
       {
         method: "POST",
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", Authorization: authorization },
         cache: "no-store",
       },
     );

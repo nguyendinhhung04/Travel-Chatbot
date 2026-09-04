@@ -593,7 +593,7 @@ class ChatAPITests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         call = orchestrate_mock.call_args
         self.assertEqual(call.args, ("Tìm quán gần đây",))
-        self.assertEqual(call.kwargs["history"][0].role, "user")
+        self.assertEqual(call.kwargs["history"], ())
         self.assertEqual(
             call.kwargs["current_location"].longitude,
             108.227,

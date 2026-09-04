@@ -1,18 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import ChatComposer from "@/components/chat-composer";
 import ChatEmptyState from "@/components/chat-empty-state";
 import ChatMessage from "@/components/chat-message";
-import QuickRecommendations from "@/components/quick-recommendations";
 import { getMockRecommendations } from "@/data/mock-recommendations";
 import { LiveTranscriptionSession } from "@/lib/live-transcription";
+import { getRecentCompleteTurns } from "@/utils/llm-history";
 import type {
   ChatErrorResponse,
   ChatItinerary,
   ChatMessage as ChatMessageType,
   ChatPlace,
-  PlaceRecommendation,
   ChatSource,
   ChatSuccessResponse,
   CurrentLocationToolCallResponse,
@@ -20,6 +19,18 @@ import type {
 } from "@/types/chat";
 
 type ChatWindowProps = {
+  conversationId: string | null;
+  messages: ChatMessageType[];
+  onMessagesChange: Dispatch<SetStateAction<ChatMessageType[]>>;
+  onNewConversation: () => void;
+  onTurnCompleted: (turn: {
+    turnId: string;
+    userContent: string;
+    assistantMessage: ChatMessageType;
+  }) => void;
+  persistencePending: boolean;
+  persistenceError: string | null;
+  onRetryPersistence: () => void;
   activeItineraryId: string | null;
   activeItineraryVersion: number | null;
   onPlacesReceived: (places: ChatPlace[]) => void;
@@ -39,29 +50,7 @@ const DEFAULT_ERROR = "Không thể nhận câu trả lời. Vui lòng thử l�
 
 const LOCATION_ERROR = "Không thể lấy vị trí hiện tại. Hãy bật GPS và quyền vị trí rồi gửi lại câu hỏi.";
 
-const MAX_CONVERSATION_TURNS = 3;
-const MAX_HISTORY_MESSAGES = MAX_CONVERSATION_TURNS * 2;
-const CHAT_STORAGE_KEY = "travel_chat_messages";
 type SpeechState = "idle" | "requesting" | "listening" | "stopping";
-
-function trimMessages(messages: ChatMessageType[]) {
-  return messages.slice(-MAX_HISTORY_MESSAGES);
-}
-
-function withoutPendingUserMessage(messages: ChatMessageType[]) {
-  return messages.at(-1)?.role === "user" ? messages.slice(0, -1) : messages;
-}
-
-function isStoredMessage(value: unknown): value is ChatMessageType {
-  if (typeof value !== "object" || value === null) return false;
-
-  const message = value as Partial<ChatMessageType>;
-  return (
-    (message.role === "user" || message.role === "assistant") &&
-    typeof message.content === "string" &&
-    message.content.trim().length > 0
-  );
-}
 
 function isSource(value: unknown): value is ChatSource {
   if (
@@ -226,18 +215,6 @@ function isItinerary(value: unknown): value is ChatItinerary {
   );
 }
 
-function isRecommendation(value: unknown): value is PlaceRecommendation {
-  if (!isPlace(value)) return false;
-  const recommendation = value as PlaceRecommendation;
-  return (
-    typeof recommendation.category === "string" &&
-    typeof recommendation.distance === "string" &&
-    (recommendation.accent === "sunset" ||
-      recommendation.accent === "river" ||
-      recommendation.accent === "garden")
-  );
-}
-
 function getErrorMessage(value: unknown) {
   if (
     typeof value === "object" &&
@@ -252,6 +229,14 @@ function getErrorMessage(value: unknown) {
 }
 
 export default function ChatWindow({
+  conversationId,
+  messages,
+  onMessagesChange,
+  onNewConversation,
+  onTurnCompleted,
+  persistencePending,
+  persistenceError,
+  onRetryPersistence,
   activeItineraryId,
   activeItineraryVersion,
   onPlacesReceived,
@@ -260,14 +245,14 @@ export default function ChatWindow({
   onPlaceHover,
   onPlaceClick,
 }: ChatWindowProps) {
-  const [messages, setMessages] = useState<ChatMessageType[]>([]);
-  const [storageLoaded, setStorageLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [speechState, setSpeechState] = useState<SpeechState>("idle");
   const [speechError, setSpeechError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
   const speechSessionRef = useRef<LiveTranscriptionSession | null>(null);
   const speechStateRef = useRef<SpeechState>("idle");
   const speechDraftRef = useRef("");
@@ -275,6 +260,10 @@ export default function ChatWindow({
   const speechInterimRef = useRef("");
   const speechFinalizeResolveRef = useRef<(() => void) | null>(null);
   const speechFinalizeTimerRef = useRef<number | null>(null);
+
+  function setMessages(update: SetStateAction<ChatMessageType[]>) {
+    onMessagesChange(update);
+  }
 
   function setSpeechMode(nextState: SpeechState) {
     speechStateRef.current = nextState;
@@ -404,60 +393,20 @@ export default function ChatWindow({
   }
 
   useEffect(() => () => {
+    requestAbortRef.current?.abort();
     void speechSessionRef.current?.close();
   }, []);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      try {
-        const stored = window.localStorage.getItem(CHAT_STORAGE_KEY);
-        if (stored) {
-          const parsed: unknown = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            const restoredMessages = trimMessages(parsed.filter(isStoredMessage)).map(
-              (message) => ({
-                ...message,
-                id: crypto.randomUUID(),
-                recommendations: Array.isArray(message.recommendations)
-                  ? message.recommendations.filter(isRecommendation)
-                  : [],
-              }),
-            );
-            setMessages(restoredMessages);
-            onPlacesReceived(
-              restoredMessages.flatMap((message) => message.places ?? []).filter(isPlace),
-            );
-          }
-        }
-      } catch {
-        try {
-          window.localStorage.removeItem(CHAT_STORAGE_KEY);
-        } catch {
-          // Ignore storage cleanup failures and keep the in-memory state empty.
-        }
-      } finally {
-        setStorageLoaded(true);
-      }
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    requestIdRef.current += 1;
+    const resetId = window.setTimeout(() => {
+      setInput("");
+      setError(null);
     }, 0);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [onPlacesReceived]);
-
-  useEffect(() => {
-    if (!storageLoaded) return;
-    try {
-      const completedMessages = withoutPendingUserMessage(messages);
-      const messagesWithoutTemporaryPlaceData = trimMessages(completedMessages).map(
-        ({ role, content, sources }) => ({ role, content, sources }),
-      );
-      window.localStorage.setItem(
-        CHAT_STORAGE_KEY,
-        JSON.stringify(messagesWithoutTemporaryPlaceData),
-      );
-    } catch {
-      // Continue with in-memory history when browser storage is unavailable.
-    }
-  }, [messages, storageLoaded]);
+    return () => window.clearTimeout(resetId);
+  }, [conversationId]);
 
   useEffect(() => {
     const messagesElement = messagesRef.current;
@@ -506,10 +455,12 @@ export default function ChatWindow({
     question: string,
     history: Array<Pick<ChatMessageType, "role" | "content">>,
     currentLocation?: UserLocation,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal,
       body: JSON.stringify({
         message: question,
         history,
@@ -541,10 +492,11 @@ export default function ChatWindow({
       content: payload.answer,
       sources: payload.sources,
       places,
+      itinerary: payload.itinerary ?? null,
       recommendations,
     };
 
-    setMessages((current) => trimMessages([...current, assistantMessage]));
+    setMessages((current) => [...current, assistantMessage]);
     const itineraryPlaceIds = new Set(
       payload.itinerary?.stops.map((stop) => stop.mapboxId) ?? [],
     );
@@ -553,11 +505,12 @@ export default function ChatWindow({
     );
     if (payload.itinerary) onItineraryReceived(payload.itinerary);
     setInput("");
+    return assistantMessage;
   }
 
   async function sendMessage() {
     const question = input.trim();
-    if (!question || loading) return;
+    if (!question || loading || persistencePending) return;
 
     const userMessage: ChatMessageType = {
       id: crypto.randomUUID(),
@@ -565,54 +518,59 @@ export default function ChatWindow({
       content: question,
     };
 
-    const history = withoutPendingUserMessage(messages)
-      .slice(-MAX_HISTORY_MESSAGES)
-      .map(({ role, content }) => ({ role, content }));
+    const history = getRecentCompleteTurns(messages);
 
+    const turnId = crypto.randomUUID();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const abortController = new AbortController();
+    requestAbortRef.current = abortController;
     setMessages((current) => [...current, userMessage]);
     setError(null);
     setLoading(true);
 
     try {
-      let payload = await requestChat(question, history);
+      let payload = await requestChat(question, history, undefined, abortController.signal);
       if (isCurrentLocationToolCall(payload)) {
         const currentLocation = await getCurrentLocation();
+        if (requestId !== requestIdRef.current) return;
         onCurrentLocationReceived(currentLocation);
-        payload = await requestChat(question, history, currentLocation);
+        payload = await requestChat(question, history, currentLocation, abortController.signal);
         if (isCurrentLocationToolCall(payload)) {
           throw new Error(LOCATION_ERROR);
         }
       }
 
+      if (requestId !== requestIdRef.current) return;
       if (!isSuccessResponse(payload)) throw new Error(DEFAULT_ERROR);
-      appendAssistantAnswer(payload, question);
+      const assistantMessage = appendAssistantAnswer(payload, question);
+      onTurnCompleted({ turnId, userContent: question, assistantMessage });
     } catch (requestError) {
+      if (requestId !== requestIdRef.current) return;
+      if (requestError instanceof DOMException && requestError.name === "AbortError") return;
       setError(requestError instanceof Error ? requestError.message : DEFAULT_ERROR);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        requestAbortRef.current = null;
+        setLoading(false);
+      }
     }
   }
 
   function startNewConversation() {
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    requestIdRef.current += 1;
     void speechSessionRef.current?.close();
     speechSessionRef.current = null;
     resolveSpeechFinalize();
     setSpeechMode("idle");
     setSpeechError(null);
-    setMessages([]);
+    onNewConversation();
     setError(null);
+    setLoading(false);
     setInput("");
-    try {
-      window.localStorage.removeItem(CHAT_STORAGE_KEY);
-    } catch {
-      // Ignore storage cleanup failures.
-    }
   }
-
-  const latestMessage = messages.at(-1);
-  const recommendations = latestMessage?.role === "assistant"
-    ? latestMessage.recommendations ?? []
-    : [];
 
   return (
     <section className="chat-shell" aria-label="Trợ lý du lịch">
@@ -655,18 +613,18 @@ export default function ChatWindow({
           ))
         )}
         {error ? <p className="error-message" role="alert">{error}</p> : null}
+        {persistenceError ? (
+          <div className="persistence-error" role="alert">
+            <span>{persistenceError}</span>
+            <button type="button" onClick={onRetryPersistence}>Thử lưu lại</button>
+          </div>
+        ) : null}
         {loading ? <p className="loading-message">Đang trả lời<span className="loading-dots" aria-hidden="true">...</span></p> : null}
       </div>
 
-      <QuickRecommendations
-        recommendations={recommendations}
-        onPlaceHover={onPlaceHover}
-        onPlaceClick={onPlaceClick}
-      />
-
       <ChatComposer
         value={input}
-        loading={loading}
+        loading={loading || persistencePending}
         speechState={speechState}
         speechError={speechError}
         onChange={setInput}

@@ -7,14 +7,21 @@ const CURRENT_LOCATION = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.clear());
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ user: { id: "507f1f77bcf86cd799439014", email: "test@example.com", displayName: "Test User", createdAt: "2026-01-01T00:00:00Z" } }),
+    }),
+  );
+  await page.route("**/api/itineraries", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "null" }),
+  );
 });
 
 async function openHydratedApp(page: Page) {
   await page.goto("/");
-  await page.waitForFunction(
-    () => window.localStorage.getItem("travel_chat_messages") !== null,
-  );
+  await expect(page.getByLabel("Câu hỏi du lịch")).toBeVisible();
 }
 
 test("renders the travel assistant", async ({ page }) => {
@@ -83,13 +90,6 @@ test("gets GPS on demand and retries the same request once", async ({
     current_location: CURRENT_LOCATION,
   });
 
-  const persistedMessages = await page.evaluate(() =>
-    window.localStorage.getItem("travel_chat_messages"),
-  );
-  expect(persistedMessages).not.toBeNull();
-  expect(persistedMessages).not.toContain("current_location");
-  expect(persistedMessages).not.toContain(String(CURRENT_LOCATION.longitude));
-  expect(persistedMessages).not.toContain(String(CURRENT_LOCATION.latitude));
 });
 
 test("does not retry when browser geolocation is denied", async ({ page }) => {
@@ -136,6 +136,26 @@ test("does not retry when browser geolocation is denied", async ({ page }) => {
     page.getByRole("alert").filter({ hasText: "Không thể lấy vị trí hiện tại" }),
   ).toBeVisible();
   expect(requestCount).toBe(1);
+});
+
+test("new conversation clears the workspace-owned messages", async ({ page }) => {
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ answer: "A fresh answer", sources: [], places: [] }),
+    }),
+  );
+
+  await openHydratedApp(page);
+  await page.getByLabel("Câu hỏi du lịch").fill("Một câu hỏi");
+  await page.getByRole("button", { name: "Gửi câu hỏi" }).click();
+  await expect(page.getByText("A fresh answer")).toBeVisible();
+
+  await page.locator(".new-chat-button").click();
+
+  await expect(page.getByText("A fresh answer")).not.toBeVisible();
+  await expect(page.locator(".empty-state h2")).toBeVisible();
 });
 
 test("stops after one GPS retry when the server requests location again", async ({

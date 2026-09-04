@@ -1,10 +1,12 @@
 using Backend.Chatbot.Tools;
 using Backend.Chatbot.Tools.Mapbox;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Backend.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/chatbot/tools")]
 [Produces("application/json")]
 public sealed class ChatbotToolsController(
